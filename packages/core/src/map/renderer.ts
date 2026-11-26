@@ -37,6 +37,8 @@ export class Renderer {
   constructor(
     private readonly map: MlMap,
     private readonly store: FeatureStore,
+    /** Pantalla táctil: asas más grandes. */
+    private readonly coarse = false,
   ) {}
 
   /** Crea fuentes/capas que falten (tras cargar un estilo nuevo). */
@@ -68,7 +70,7 @@ export class Renderer {
       type: 'circle',
       source: OVERLAY_SOURCE,
       filter: kind('midpoint'),
-      paint: { 'circle-radius': 3.5, 'circle-color': '#ffffff', 'circle-opacity': 0.85, 'circle-stroke-color': SELECTED_COLOR, 'circle-stroke-width': 1.5 },
+      paint: { 'circle-radius': this.coarse ? 6 : 3.5, 'circle-color': '#ffffff', 'circle-opacity': 0.85, 'circle-stroke-color': SELECTED_COLOR, 'circle-stroke-width': 1.5 },
     });
     add({
       id: 'me-overlay-vertex',
@@ -76,7 +78,7 @@ export class Renderer {
       source: OVERLAY_SOURCE,
       filter: kind(['vertex', 'sketch-vertex']),
       paint: {
-        'circle-radius': ['case', ['boolean', ['get', 'active'], false], 7, 5],
+        'circle-radius': ['case', ['boolean', ['get', 'active'], false], this.coarse ? 11 : 7, this.coarse ? 8 : 5],
         'circle-color': ['case', ['boolean', ['get', 'active'], false], SELECTED_COLOR, '#ffffff'],
         'circle-stroke-color': ['case', ['boolean', ['get', 'endpoint'], false], '#c0392b', '#333333'],
         'circle-stroke-width': 2,

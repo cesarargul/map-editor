@@ -168,3 +168,61 @@ export class MeStatusBar extends EditorConsumer {
     </div>`;
   }
 }
+
+/**
+ * Acciones de edición contextuales: terminar/cancelar el dibujo, quitar el último vértice o borrar
+ * el vértice tocado. Imprescindible en pantallas táctiles (sin teclado ni doble clic fiable).
+ */
+export class MeEditActions extends EditorConsumer {
+  static override styles = [
+    theme,
+    controls,
+    css`
+      :host {
+        display: block;
+      }
+      .bar {
+        display: flex;
+        gap: 6px;
+        padding: 6px;
+        flex-wrap: nowrap;
+        justify-content: center;
+        white-space: nowrap;
+      }
+      @media (max-width: 400px) {
+        button {
+          padding: 8px;
+        }
+      }
+      button {
+        padding: 8px 12px;
+        min-height: 40px;
+      }
+    `,
+  ];
+
+  constructor() {
+    super();
+    this.watch = ['edit-state-changed', 'tool-changed', 'selection-changed'];
+  }
+
+  override render() {
+    const ed = this.editor;
+    if (!ed) return nothing;
+    const s = ed.getEditState();
+    const drawing = s.tool === 'draw-line' || s.tool === 'draw-polygon';
+    if (drawing && s.sketchVertices > 0) {
+      return html`<div class="bar panel" role="toolbar" aria-label="Acciones de dibujo">
+        <button class="primary" ?disabled=${!s.canFinish} @click=${() => ed.finishSketch()}>✓ Terminar</button>
+        <button class="outline" @click=${() => ed.undoSketchVertex()}>${icons.undo} Quitar vértice</button>
+        <button class="outline" @click=${() => ed.cancelSketch()}>${icons.close} Cancelar</button>
+      </div>`;
+    }
+    if (s.tool === 'select' && s.activeVertex) {
+      return html`<div class="bar panel" role="toolbar" aria-label="Acciones de vértice">
+        <button class="outline" @click=${() => ed.deleteActiveVertex()}>${icons.trash} Borrar vértice</button>
+      </div>`;
+    }
+    return nothing;
+  }
+}

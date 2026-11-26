@@ -1,18 +1,18 @@
 import type { Feature, Geometry, Position } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
 import { type Map as MlMap, type MapMouseEvent, type MapOptions, type MapTouchEvent, type StyleSpecification } from 'maplibre-gl';
-import { bbox } from './geom/coords.js';
+import { bbox, getSegments, getVertices } from './geom/coords.js';
 import { memorySource, readFiles, writeLayer, type ExportOptions, type ExportResult, type InputFile, type IoConfig } from './io/index.js';
 import { BASEMAP_PREFIX, defaultBasemaps, rasterStyle, type BasemapDef } from './map/basemaps.js';
 import { FID, OVERLAY_SOURCE, Renderer, sourceId, toRenderFeature } from './map/renderer.js';
 import { Autosaver, IndexedDbSessionStorage, summarize, type AutosaveOptions, type SavedSession, type SessionSummary } from './persistence/autosave.js';
 import { normalizeSnapConfig, type SnapConfig } from './snapping/config.js';
-import { Snapper, type SnapResult } from './snapping/snapper.js';
+import { lerpCoord, Snapper, type SnapResult } from './snapping/snapper.js';
 import { FeatureStore, type StoreEvents } from './store/store.js';
 import { DrawTool } from './tools/draw.js';
 import { MoveTool } from './tools/move.js';
 import { SelectTool, sameRef } from './tools/select.js';
-import type { Tool, ToolContext, ToolId, ToolPointerEvent } from './tools/tool.js';
+import type { EditState, Tool, ToolContext, ToolId, ToolPointerEvent } from './tools/tool.js';
 import type { FeatureRef, FieldDef, GeometryKind, LayerInfo, LayerStyle, Projector, ScreenPoint } from './types.js';
 import { downloadBlob } from './util/dropzone.js';
 import { Emitter } from './util/emitter.js';
@@ -66,6 +66,7 @@ export interface EditorEvents extends Record<string, unknown> {
   'session-recoverable': SessionSummary;
   autosaved: { savedAt: number };
   'files-loaded': { layers: LayerInfo[]; errors: Array<{ file: string; message: string }> };
+  'edit-state-changed': EditState;
 }
 
 const NEW_LAYER_NAME: Record<Exclude<GeometryKind, 'Mixed'>, string> = {
@@ -124,7 +125,8 @@ export class MapEditor {
     this.map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
-    this.renderer = new Renderer(this.map, this.store);
+    this.coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+    this.renderer = new Renderer(this.map, this.store, this.coarse);
     this.tools = {
       select: new SelectTool(),
       'draw-point': new DrawTool('draw-point'),
@@ -158,6 +160,9 @@ export class MapEditor {
   }
 
   private tileErrorShown = false;
+  /** Dispositivo táctil principal (asas y tolerancias más grandes). */
+  private readonly coarse: boolean;
+  private lastTouchAt = 0;
   /** El estilo está cargado y se pueden añadir fuentes/capas (no confundir con map.loaded(), que espera a las teselas). */
   private styleReady = false;
 
@@ -312,6 +317,37 @@ export class MapEditor {
     this.updateCursor();
     this.redraw();
     this.events.emit('tool-changed', { tool: id });
+    this.emitEditState();
+  }
+
+  // --- Acciones de edición (para botones en pantallas táctiles) -------------------------------
+
+  getEditState(): EditState {
+    return { tool: this.tool.id, sketchVertices: 0, canFinish: false, activeVertex: false, ...this.tool.editState?.() };
+  }
+
+  /** Termina la línea o el polígono en curso. */
+  finishSketch(): void {
+    if (this.tool instanceof DrawTool) this.tool.finish();
+  }
+
+  /** Quita el último vértice de la línea o el polígono en curso. */
+  undoSketchVertex(): void {
+    if (this.tool instanceof DrawTool) this.tool.removeLast();
+  }
+
+  /** Descarta la línea o el polígono en curso. */
+  cancelSketch(): void {
+    if (this.tool instanceof DrawTool) this.tool.cancel();
+  }
+
+  /** Borra el vértice activo (tocado) de la entidad seleccionada. */
+  deleteActiveVertex(): void {
+    if (this.tool instanceof SelectTool) this.tool.deleteActiveVertex();
+  }
+
+  private emitEditState(): void {
+    this.events.emit('edit-state-changed', this.getEditState());
   }
 
   getSelection(): FeatureRef[] {
@@ -328,6 +364,7 @@ export class MapEditor {
     if (next.length && next.every((r) => r.layerId === next[0]!.layerId)) this.setActiveLayer(next[0]!.layerId);
     this.redraw();
     this.events.emit('selection-changed', { selection: [...next] });
+    this.emitEditState();
   }
 
   deleteSelected(): void {
@@ -497,6 +534,7 @@ export class MapEditor {
       deleteSelected: () => self.deleteSelected(),
       setTool: (id) => self.setTool(id),
       message: (lvl, t) => self.message(lvl, t),
+      stateChanged: () => self.emitEditState(),
     };
   }
 
@@ -563,6 +601,7 @@ export class MapEditor {
       const oe = e.originalEvent as MouseEvent | TouchEvent;
       const point = { x: e.point.x, y: e.point.y };
       const lngLat = e.lngLat.toArray();
+      const touch = this.coarse || (typeof TouchEvent !== 'undefined' && oe instanceof TouchEvent) || Date.now() - this.lastTouchAt < 1000;
       const req = this.tool.snapRequest();
       const snap = req
         ? this.snapper.snap({
@@ -572,6 +611,7 @@ export class MapEditor {
             availableLayerIds: this.snapLayerIds(),
             ...(req.excludeVertices ? { excludeVertices: req.excludeVertices } : {}),
             ...(req.excludeFeatures ? { excludeFeatures: req.excludeFeatures } : {}),
+            ...(touch ? { toleranceScale: 2 } : {}),
           })
         : null;
       return {
@@ -610,6 +650,7 @@ export class MapEditor {
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
     map.on('touchstart', (e) => {
+      this.lastTouchAt = Date.now();
       if (e.points.length === 1) onDown(e);
     });
     map.on('touchmove', (e) => {
@@ -729,7 +770,12 @@ export class MapEditor {
     return (this.snapper.config.visibleOnly ? layers.filter((l) => l.visible) : layers).map((l) => l.id);
   }
 
+  private get touchScale(): number {
+    return this.coarse || Date.now() - this.lastTouchAt < 1000 ? 3 : 1;
+  }
+
   private hitTest(point: ScreenPoint, tol = 4): FeatureRef[] {
+    tol *= this.touchScale;
     return this.queryRefs([
       [point.x - tol, point.y - tol],
       [point.x + tol, point.y + tol],
@@ -755,19 +801,32 @@ export class MapEditor {
     return out;
   }
 
+  /**
+   * Asa (vértice o punto medio) de la entidad seleccionada bajo el cursor. Se calcula con las
+   * coordenadas, no con lo pintado, para no depender de que el mapa haya repintado las asas.
+   */
   private hitHandle(point: ScreenPoint): { kind: 'vertex' | 'midpoint'; path: number[] } | null {
-    const tol = 7;
-    const hits = this.map.queryRenderedFeatures(
-      [
-        [point.x - tol, point.y - tol],
-        [point.x + tol, point.y + tol],
-      ],
-      { layers: ['me-overlay-vertex', 'me-overlay-midpoint'] },
-    );
-    // Prioridad a vértices frente a puntos medios
-    const v = hits.find((h) => h.properties?.['kind'] === 'vertex') ?? hits.find((h) => h.properties?.['kind'] === 'midpoint');
-    if (!v) return null;
-    return { kind: v.properties['kind'] as 'vertex' | 'midpoint', path: JSON.parse(String(v.properties['path'])) as number[] };
+    if (this.selection.length !== 1) return null;
+    const ref = this.selection[0]!;
+    const geometry = this.store.getFeature(ref.layerId, ref.featureId)?.geometry;
+    if (!geometry) return null;
+    const tol = this.touchScale > 1 ? 18 : 7;
+    const dist = (c: Position) => {
+      const p = this.projector.project(c);
+      return Math.hypot(p.x - point.x, p.y - point.y);
+    };
+    let best: { kind: 'vertex' | 'midpoint'; path: number[]; d: number } | null = null;
+    for (const v of getVertices(geometry)) {
+      const d = dist(v.coord);
+      if (d <= tol && (!best || d < best.d)) best = { kind: 'vertex', path: v.path, d };
+    }
+    if (best) return { kind: best.kind, path: best.path };
+    if (geometry.type === 'Point' || geometry.type === 'MultiPoint') return null;
+    for (const s of getSegments(geometry)) {
+      const d = dist(lerpCoord(s.a, s.b, 0.5, false));
+      if (d <= tol && (!best || d < best.d)) best = { kind: 'midpoint', path: s.insertPath, d };
+    }
+    return best ? { kind: best.kind, path: best.path } : null;
   }
 
   private isEditable(layerId: string): boolean {

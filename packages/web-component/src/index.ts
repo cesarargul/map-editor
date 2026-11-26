@@ -1,11 +1,11 @@
 import { MeAttributePanel, MeAttributeTable } from './components/attributes.js';
 import { MeExportDialog, MeSnapSettings } from './components/dialogs.js';
 import { MeLayerPanel } from './components/layer-panel.js';
-import { MeBasemapSwitcher, MeStatusBar } from './components/misc.js';
+import { MeBasemapSwitcher, MeEditActions, MeStatusBar } from './components/misc.js';
 import { MeToolbar } from './components/toolbar.js';
 import { MapEditorElement } from './map-editor-element.js';
 
-export { MapEditorElement, MeToolbar, MeLayerPanel, MeAttributePanel, MeAttributeTable, MeExportDialog, MeSnapSettings, MeBasemapSwitcher, MeStatusBar };
+export { MapEditorElement, MeToolbar, MeLayerPanel, MeAttributePanel, MeAttributeTable, MeExportDialog, MeSnapSettings, MeBasemapSwitcher, MeStatusBar, MeEditActions };
 export { EditorConsumer } from './base.js';
 export * from '@map-editor/core';
 
@@ -19,6 +19,7 @@ const ELEMENTS: Record<string, CustomElementConstructor> = {
   'me-snap-settings': MeSnapSettings,
   'me-basemap-switcher': MeBasemapSwitcher,
   'me-status-bar': MeStatusBar,
+  'me-edit-actions': MeEditActions,
 };
 
 for (const [tag, ctor] of Object.entries(ELEMENTS)) {
@@ -36,5 +37,6 @@ declare global {
     'me-snap-settings': MeSnapSettings;
     'me-basemap-switcher': MeBasemapSwitcher;
     'me-status-bar': MeStatusBar;
+    'me-edit-actions': MeEditActions;
   }
 }

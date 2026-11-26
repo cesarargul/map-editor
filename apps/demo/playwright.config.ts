@@ -10,6 +10,8 @@ export default defineConfig({
     baseURL: 'http://localhost:4173',
     viewport: { width: 1400, height: 900 },
     trace: 'off',
+    // En CI: captura y traza del intento que falle, para poder diagnosticarlo descargando el artefacto
+    screenshot: 'only-on-failure',
     launchOptions: { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
   },
   webServer: {

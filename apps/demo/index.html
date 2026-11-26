@@ -2,7 +2,8 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1d2329" />
     <title>Map Editor · Demo</title>
     <style>
       html,
@@ -25,6 +26,11 @@
         color: #fff;
         font-size: 14px;
         flex-wrap: wrap;
+      }
+      @media (max-width: 640px) {
+        header { gap: 6px; padding: 6px 8px; font-size: 12px; }
+        header > span { display: none; }
+        header button { padding: 2px 6px; }
       }
       header strong {
         font-size: 15px;
@@ -61,7 +67,7 @@
       <button data-sample="hidrantes.gpkg">Hidrantes (GeoPackage)</button>
     </header>
     <main>
-      <map-editor id="editor" basemap="osm" center="-3.7,40.2" zoom="5.3" storage-key="demo" sql-wasm-url="/sql-wasm.wasm"></map-editor>
+      <map-editor id="editor" basemap="osm" center="-3.7,40.2" zoom="5.3" storage-key="demo" sql-wasm-url="sql-wasm.wasm"></map-editor>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

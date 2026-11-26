@@ -44,7 +44,13 @@ export class MeToolbar extends EditorConsumer {
       @media (max-width: 640px) {
         .bar {
           flex-direction: row;
-          flex-wrap: wrap;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+        button.icon {
+          padding: 8px;
+          flex: none;
         }
         .sep {
           width: 1px;

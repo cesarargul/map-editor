@@ -62,7 +62,7 @@ export class DrawTool implements Tool {
       }
     }
     this.coords.push(coord);
-    this.ctx.redraw();
+    this.changed();
   }
 
   onDoubleClick(e: ToolPointerEvent): void {
@@ -76,15 +76,12 @@ export class DrawTool implements Tool {
         this.finish();
         return true;
       case 'Escape':
-        if (this.coords.length) {
-          this.reset();
-          this.ctx.redraw();
-        } else this.ctx.setTool('select');
+        if (this.coords.length) this.cancel();
+        else this.ctx.setTool('select');
         return true;
       case 'Backspace':
         if (!this.coords.length) return false;
-        this.coords.pop();
-        this.ctx.redraw();
+        this.removeLast();
         return true;
       default:
         return false;
@@ -108,7 +105,30 @@ export class DrawTool implements Tool {
     return 'crosshair';
   }
 
-  private finish(): void {
+  editState() {
+    const n = this.coords.length;
+    return { sketchVertices: n, canFinish: this.kind === 'Polygon' ? n >= 3 : this.kind === 'LineString' && n >= 2 };
+  }
+
+  /** Quita el último vértice del boceto. */
+  removeLast(): void {
+    if (!this.coords.length) return;
+    this.coords.pop();
+    this.changed();
+  }
+
+  /** Descarta el boceto. */
+  cancel(): void {
+    this.reset();
+    this.changed();
+  }
+
+  private changed(): void {
+    this.ctx.redraw();
+    this.ctx.stateChanged();
+  }
+
+  finish(): void {
     if (this.kind === 'LineString' && this.coords.length >= 2) {
       this.commit({ type: 'LineString', coordinates: this.coords });
     } else if (this.kind === 'Polygon' && this.coords.length >= 3) {
@@ -124,7 +144,7 @@ export class DrawTool implements Tool {
     const id = this.ctx.store.transact(LABEL[this.kind], (tx) => tx.add(layerId, geometry, {}));
     this.ctx.setSelection([{ layerId, featureId: id }]);
     this.reset();
-    this.ctx.redraw();
+    this.changed();
   }
 
   private reset(): void {

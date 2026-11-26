@@ -54,6 +54,19 @@ export interface ToolContext {
   deleteSelected(): void;
   setTool(id: ToolId): void;
   message(level: 'info' | 'warning' | 'error', text: string): void;
+  /** Avisa de que ha cambiado el estado de edición (vértices del boceto, vértice activo…). */
+  stateChanged(): void;
+}
+
+/** Estado de edición que la interfaz necesita para mostrar acciones (útil en pantallas táctiles). */
+export interface EditState {
+  tool: ToolId;
+  /** Vértices del boceto en curso (dibujo). */
+  sketchVertices: number;
+  /** Se puede terminar el boceto (línea ≥ 2 vértices, polígono ≥ 3). */
+  canFinish: boolean;
+  /** Hay un vértice activo (tocado) en la entidad seleccionada que se puede borrar. */
+  activeVertex: boolean;
 }
 
 export interface Tool {
@@ -71,6 +84,8 @@ export interface Tool {
   onKeyDown?(e: KeyboardEvent): boolean;
   overlay(): Feature[];
   cursor(): string;
+  /** Parte del estado de edición que aporta la herramienta. */
+  editState?(): Partial<EditState>;
 }
 
 export const pt = (coordinates: Position, properties: Record<string, unknown>): Feature => ({

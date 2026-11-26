@@ -16,7 +16,7 @@ el.whenReady.then((editor: MapEditor) => {
 for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-sample]')) {
   btn.addEventListener('click', async () => {
     const name = btn.dataset['sample']!;
-    const res = await fetch(`/samples/${name}`);
+    const res = await fetch(new URL(`samples/${name}`, document.baseURI));
     const file = new File([await res.arrayBuffer()], name);
     await el.loadFiles([file]);
   });
