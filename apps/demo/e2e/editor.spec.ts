@@ -238,6 +238,11 @@ test('atajos de teclado con el foco en un panel y mover entidad con Ctrl+Z', asy
   await page.locator('me-layer-panel .name').first().click();
   await page.keyboard.press('m');
   await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('move');
+  // El botón «Tabla» desaparece al pulsarlo y el foco vuelve a <body>: los atajos deben seguir funcionando
+  await page.locator('map-editor button', { hasText: 'Tabla' }).click();
+  await page.keyboard.press('l');
+  await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('draw-line');
+  await page.keyboard.press('m');
 
   await focusOn(page, 440200, 4474150);
   const p = await toScreen(page, await utm(page, 440200, 4474150));

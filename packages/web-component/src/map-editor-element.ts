@@ -73,6 +73,7 @@ export class MapEditorElement extends LitElement {
   declare recoverable: SessionSummary | null;
   declare loading: boolean;
 
+  private static lastActive: MapEditorElement | null = null;
   private _editor: MapEditor | null = null;
   private toastId = 0;
   private cleanup: Array<() => void> = [];
@@ -334,8 +335,21 @@ export class MapEditorElement extends LitElement {
           if (this.dialog) return;
           ed.handleKey(e);
         };
+        // Si el foco vuelve a <body> (p. ej. el botón pulsado desaparece), los atajos los recibe
+        // el último editor con el que se interactuó.
+        const onDocKey = (e: KeyboardEvent) => {
+          if (MapEditorElement.lastActive === this && (e.target === document.body || e.target === document.documentElement)) onKey(e);
+        };
+        const onPointer = () => (MapEditorElement.lastActive = this);
         this.addEventListener('keydown', onKey);
-        return () => this.removeEventListener('keydown', onKey);
+        this.addEventListener('pointerdown', onPointer, true);
+        document.addEventListener('keydown', onDocKey);
+        return () => {
+          this.removeEventListener('keydown', onKey);
+          this.removeEventListener('pointerdown', onPointer, true);
+          document.removeEventListener('keydown', onDocKey);
+          if (MapEditorElement.lastActive === this) MapEditorElement.lastActive = null;
+        };
       })(),
       installDropZone(this, {
         onFiles: (files) => void this.loadFiles(files),
