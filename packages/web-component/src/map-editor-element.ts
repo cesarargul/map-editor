@@ -234,6 +234,15 @@ export class MapEditorElement extends LitElement {
         flex: 1;
         min-width: 200px;
       }
+      .actions {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 52px;
+        z-index: 4;
+        width: max-content;
+        max-width: calc(100% - 20px);
+      }
       .loading {
         position: absolute;
         top: 50%;
@@ -246,6 +255,18 @@ export class MapEditorElement extends LitElement {
         bottom: 0;
       }
       @media (max-width: 640px) {
+        .bottom-left {
+          right: 10px;
+        }
+        .bottom-left me-status-bar {
+          display: none;
+        }
+        .maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale {
+          display: none;
+        }
+        .actions {
+          bottom: 64px;
+        }
         .side {
           right: 10px;
           top: auto;
@@ -257,8 +278,17 @@ export class MapEditorElement extends LitElement {
           right: 54px;
         }
         .toasts {
-          width: calc(100% - 20px);
-          top: 60px;
+          width: auto;
+          left: 10px;
+          right: 60px;
+          transform: none;
+          top: 70px;
+          bottom: auto;
+        }
+        .side.closed {
+          bottom: auto;
+          top: 64px;
+          width: auto;
         }
       }
     `,
@@ -282,7 +312,8 @@ export class MapEditorElement extends LitElement {
     this.dragging = false;
     this.dialog = null;
     this.tableOpen = false;
-    this.panelOpen = true;
+    // En pantallas pequeñas los paneles empiezan plegados para dejar sitio al mapa
+    this.panelOpen = typeof matchMedia === 'undefined' || !matchMedia('(max-width: 640px)').matches;
     this.recoverable = null;
     this.loading = false;
     this.whenReady = new Promise((r) => (this.resolveReady = r));
@@ -425,6 +456,7 @@ export class MapEditorElement extends LitElement {
 
             `
           : nothing}
+        ${ed && this.has('toolbar') ? html`<me-edit-actions class="actions" .editor=${ed}></me-edit-actions>` : nothing}
         ${this.renderRecovery()} ${this.renderToasts()}
         ${this.loading ? html`<div class="loading panel">Leyendo ficheros…</div>` : nothing}
         ${this.dragging ? html`<div class="drop"><span>Suelta aquí los ficheros (GeoJSON, Shapefile, KML, GPX, GeoPackage, FlatGeobuf…)</span></div>` : nothing}

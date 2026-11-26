@@ -20,6 +20,8 @@ export class SelectTool implements Tool {
   private ctx!: ToolContext;
   private state: State = { kind: 'idle' };
   private suppressClick = false;
+  /** Vértice tocado sin arrastrar: se puede borrar con `deleteActiveVertex()` (pantallas táctiles). */
+  private activeVertex: { ref: FeatureRef; path: VertexPath } | null = null;
 
   activate(ctx: ToolContext): void {
     this.ctx = ctx;
@@ -97,6 +99,7 @@ export class SelectTool implements Tool {
     this.state = { kind: 'idle' };
     if (s.kind === 'vertex') {
       this.suppressClick = true;
+      this.setActiveVertex(s.moved ? null : { ref: s.ref, path: s.path });
       if (s.moved) {
         const label = 'Editar vértice';
         this.ctx.store.transact(label, (tx) => tx.setGeometry(s.ref.layerId, s.ref.featureId, s.geometry));
@@ -115,11 +118,40 @@ export class SelectTool implements Tool {
     this.ctx.redraw();
   }
 
+  editState() {
+    if (!this.ctx) return {};
+    const t = this.activeVertex;
+    const sel = this.ctx.getSelection();
+    const valid = !!t && sel.length === 1 && sameRef(sel[0]!, t.ref);
+    return { activeVertex: valid };
+  }
+
+  /** Borra el vértice activo (el último tocado sin arrastrar). */
+  deleteActiveVertex(): void {
+    const t = this.activeVertex;
+    if (!t) return;
+    const feature = this.ctx.store.getFeature(t.ref.layerId, t.ref.featureId);
+    if (!feature?.geometry) return;
+    const geometry = clone(feature.geometry);
+    if (removeVertex(geometry, t.path)) {
+      this.ctx.store.transact('Borrar vértice', (tx) => tx.setGeometry(t.ref.layerId, t.ref.featureId, geometry));
+    } else {
+      this.ctx.message('warning', 'No se puede borrar: la geometría quedaría con muy pocos vértices.');
+    }
+    this.setActiveVertex(null);
+  }
+
+  private setActiveVertex(v: { ref: FeatureRef; path: VertexPath } | null): void {
+    this.activeVertex = v;
+    this.ctx.stateChanged();
+  }
+
   onClick(e: ToolPointerEvent): void {
     if (this.suppressClick) {
       this.suppressClick = false;
       return;
     }
+    if (this.activeVertex) this.setActiveVertex(null);
     const hit = this.ctx.hitTest(e.point, 4)[0];
     const current = this.ctx.getSelection();
     if (!hit) {
@@ -177,7 +209,9 @@ export class SelectTool implements Tool {
           kind: 'vertex',
           path: JSON.stringify(v.path),
           endpoint: v.isEndpoint,
-          active: s.kind === 'vertex' && samePath(s.path, v.path),
+          active:
+            (s.kind === 'vertex' && samePath(s.path, v.path)) ||
+            (s.kind === 'idle' && !!this.activeVertex && sameRef(this.activeVertex.ref, target) && samePath(this.activeVertex.path, v.path)),
         }),
       );
     }

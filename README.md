@@ -26,6 +26,17 @@ El análisis y las decisiones de diseño están en [`docs/ANALISIS.md`](docs/ANA
 - [ ] Fase 3: geometría avanzada (dividir, unir, rotar…) y productividad (copiar/pegar, medir…)
 - [ ] Fase 4: WMS dinámicos, proxy CORS, catálogo recolectado con IA y buscador
 
+## Demo en línea
+
+https://cesarargul.github.io/map-editor/: se publica automáticamente en cada push a `main` (workflow `pages.yml`). Hay que activarla una vez en *Settings → Pages → Source: GitHub Actions*.
+
+### En el móvil
+
+- Tocar añade vértices. Mientras dibujas aparece una barra con **Terminar**, **Quitar vértice** y **Cancelar** (sustituyen al doble clic, a Intro, a Retroceso y a Esc).
+- Con *Seleccionar*, toca una entidad y luego uno de sus vértices: puedes arrastrarlo con el dedo o borrarlo con **Borrar vértice** (sustituye a Alt+clic).
+- En pantallas táctiles las asas son más grandes y la tolerancia del snapping y de la selección se duplica.
+- En pantallas estrechas los paneles empiezan plegados (botón de capas, arriba a la derecha).
+
 ## Desarrollo
 
 Requisitos: Node 22 y pnpm 10.

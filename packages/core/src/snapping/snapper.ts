@@ -57,6 +57,8 @@ export interface SnapQuery {
   excludeVertices?: Array<FeatureRef & { path: VertexPath }>;
   /** Entidades completas a ignorar (las que se están moviendo). */
   excludeFeatures?: FeatureRef[];
+  /** Multiplica las tolerancias (p. ej. ×2 con el dedo). */
+  toleranceScale?: number;
 }
 
 const TYPE_PENALTY: Record<SnapType, number> = {
@@ -129,7 +131,8 @@ export class Snapper {
     if (targets.length === 0) return null;
 
     const { projector, point } = query;
-    const maxTol = Math.max(cfg.tolerancePx, ...targets.map((t) => cfg.targets[t]?.tolerancePx ?? 0));
+    const k = query.toleranceScale ?? 1;
+    const maxTol = k * Math.max(cfg.tolerancePx, ...targets.map((t) => cfg.targets[t]?.tolerancePx ?? 0));
     const box = screenBoxToLngLat(projector, point, maxTol);
 
     const excludedFeature = (it: Item) =>
@@ -145,7 +148,7 @@ export class Snapper {
       const tree = this.trees.get(layerId);
       if (!tree) continue;
       const types = targetTypes(cfg, layerId);
-      const tol = cfg.targets[layerId]?.tolerancePx ?? cfg.tolerancePx;
+      const tol = k * (cfg.targets[layerId]?.tolerancePx ?? cfg.tolerancePx);
       const wantVertex = types.includes('vertex');
       const wantEndpoint = types.includes('endpoint');
 
@@ -208,10 +211,9 @@ export class Snapper {
         const hit = intersect(s1.sa, s1.sb, s2.sa, s2.sb);
         if (!hit) continue;
         const d = dist(hit.p, point);
-        const tol = Math.min(
-          cfg.targets[s1.it.layerId]?.tolerancePx ?? cfg.tolerancePx,
-          cfg.targets[s2.it.layerId]?.tolerancePx ?? cfg.tolerancePx,
-        );
+        const tol =
+          k *
+          Math.min(cfg.targets[s1.it.layerId]?.tolerancePx ?? cfg.tolerancePx, cfg.targets[s2.it.layerId]?.tolerancePx ?? cfg.tolerancePx);
         if (d > tol) continue;
         // Si la intersección coincide con un vértice, ya se cubre como vértice.
         if (hit.t < 1e-6 || hit.t > 1 - 1e-6 || hit.u < 1e-6 || hit.u > 1 - 1e-6) continue;

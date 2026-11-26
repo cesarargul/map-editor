@@ -3,6 +3,8 @@ import { defineConfig } from 'vite';
 
 // En desarrollo se usan las fuentes de los paquetes (HMR sin compilar).
 export default defineConfig({
+  // Rutas relativas: la demo funciona igual en la raíz de un dominio que en GitHub Pages (/map-editor/)
+  base: './',
   resolve: {
     alias: {
       '@map-editor/web-component': fileURLToPath(new URL('../../packages/web-component/src/index.ts', import.meta.url)),
