@@ -4,6 +4,10 @@ const { defaultBrowserType: _ignored, ...pixel } = devices['Pixel 7']!;
 test.use(pixel);
 
 test('móvil: dibujar con toques, terminar con botón, arrastrar y borrar vértice', async ({ page, context }) => {
+  if (process.env['CPU_THROTTLE']) {
+    const c = await context.newCDPSession(page);
+    await c.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env['CPU_THROTTLE']) });
+  }
   await page.goto('/');
   await page.waitForSelector('body[data-ready=true]');
   await page.tap('[data-sample="red_abastecimiento.geojson"]');
@@ -31,11 +35,16 @@ test('móvil: dibujar con toques, terminar con botón, arrastrar y borrar vérti
     const p = window.editor.map.project(g.coordinates[1]!);
     return { x: r.left + p.x, y: r.top + p.y, before: JSON.stringify(g) };
   });
+  // Esperar a que el mapa haya pintado las asas de los vértices antes de tocarlas
+  await page.waitForFunction(() => window.editor.map.queryRenderedFeatures({ layers: ['me-overlay-vertex'] }).length > 0);
   const cdp = await context.newCDPSession(page);
   const touch = (type: string, x = 0, y = 0) =>
     cdp.send('Input.dispatchTouchEvent', { type: type as 'touchStart', touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   await touch('touchStart', v.x, v.y);
-  for (let i = 1; i <= 6; i++) await touch('touchMove', v.x + i * 5, v.y + i * 8);
+  for (let i = 1; i <= 6; i++) {
+    await touch('touchMove', v.x + i * 5, v.y + i * 8);
+    await page.waitForTimeout(30);
+  }
   await touch('touchEnd');
   const geom = () =>
     page.evaluate(() => {

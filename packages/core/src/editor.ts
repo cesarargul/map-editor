@@ -1,13 +1,13 @@
 import type { Feature, Geometry, Position } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
 import { type Map as MlMap, type MapMouseEvent, type MapOptions, type MapTouchEvent, type StyleSpecification } from 'maplibre-gl';
-import { bbox } from './geom/coords.js';
+import { bbox, getSegments, getVertices } from './geom/coords.js';
 import { memorySource, readFiles, writeLayer, type ExportOptions, type ExportResult, type InputFile, type IoConfig } from './io/index.js';
 import { BASEMAP_PREFIX, defaultBasemaps, rasterStyle, type BasemapDef } from './map/basemaps.js';
 import { FID, OVERLAY_SOURCE, Renderer, sourceId, toRenderFeature } from './map/renderer.js';
 import { Autosaver, IndexedDbSessionStorage, summarize, type AutosaveOptions, type SavedSession, type SessionSummary } from './persistence/autosave.js';
 import { normalizeSnapConfig, type SnapConfig } from './snapping/config.js';
-import { Snapper, type SnapResult } from './snapping/snapper.js';
+import { lerpCoord, Snapper, type SnapResult } from './snapping/snapper.js';
 import { FeatureStore, type StoreEvents } from './store/store.js';
 import { DrawTool } from './tools/draw.js';
 import { MoveTool } from './tools/move.js';
@@ -801,19 +801,32 @@ export class MapEditor {
     return out;
   }
 
+  /**
+   * Asa (vértice o punto medio) de la entidad seleccionada bajo el cursor. Se calcula con las
+   * coordenadas, no con lo pintado, para no depender de que el mapa haya repintado las asas.
+   */
   private hitHandle(point: ScreenPoint): { kind: 'vertex' | 'midpoint'; path: number[] } | null {
+    if (this.selection.length !== 1) return null;
+    const ref = this.selection[0]!;
+    const geometry = this.store.getFeature(ref.layerId, ref.featureId)?.geometry;
+    if (!geometry) return null;
     const tol = this.touchScale > 1 ? 18 : 7;
-    const hits = this.map.queryRenderedFeatures(
-      [
-        [point.x - tol, point.y - tol],
-        [point.x + tol, point.y + tol],
-      ],
-      { layers: ['me-overlay-vertex', 'me-overlay-midpoint'] },
-    );
-    // Prioridad a vértices frente a puntos medios
-    const v = hits.find((h) => h.properties?.['kind'] === 'vertex') ?? hits.find((h) => h.properties?.['kind'] === 'midpoint');
-    if (!v) return null;
-    return { kind: v.properties['kind'] as 'vertex' | 'midpoint', path: JSON.parse(String(v.properties['path'])) as number[] };
+    const dist = (c: Position) => {
+      const p = this.projector.project(c);
+      return Math.hypot(p.x - point.x, p.y - point.y);
+    };
+    let best: { kind: 'vertex' | 'midpoint'; path: number[]; d: number } | null = null;
+    for (const v of getVertices(geometry)) {
+      const d = dist(v.coord);
+      if (d <= tol && (!best || d < best.d)) best = { kind: 'vertex', path: v.path, d };
+    }
+    if (best) return { kind: best.kind, path: best.path };
+    if (geometry.type === 'Point' || geometry.type === 'MultiPoint') return null;
+    for (const s of getSegments(geometry)) {
+      const d = dist(lerpCoord(s.a, s.b, 0.5, false));
+      if (d <= tol && (!best || d < best.d)) best = { kind: 'midpoint', path: s.insertPath, d };
+    }
+    return best ? { kind: best.kind, path: best.path } : null;
   }
 
   private isEditable(layerId: string): boolean {
