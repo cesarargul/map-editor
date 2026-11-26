@@ -1,0 +1,32 @@
+{
+  "name": "@map-editor/angular",
+  "version": "0.1.0",
+  "description": "Componente Angular (standalone, signals) para el editor vectorial <map-editor>.",
+  "scripts": {
+    "build": "ng-packagr -p ng-package.json -c tsconfig.lib.json",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit"
+  },
+  "peerDependencies": {
+    "@angular/core": ">=22.2.0 <23.0.0",
+    "@map-editor/web-component": "workspace:*"
+  },
+  "dependencies": {
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@angular/common": "~22.3.0",
+    "@angular/compiler": "~22.3.0",
+    "@angular/compiler-cli": "~22.3.0",
+    "@angular/core": "~22.3.0",
+    "@angular/platform-browser": "~22.3.0",
+    "@map-editor/core": "workspace:*",
+    "@map-editor/web-component": "workspace:*",
+    "maplibre-gl": "^6.19.0",
+    "ng-packagr": "~22.3.0",
+    "rxjs": "^7.8.2",
+    "typescript": "~6.0.3"
+  },
+  "publishConfig": {
+    "directory": "dist"
+  }
+}

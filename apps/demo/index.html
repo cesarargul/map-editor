@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Map Editor · Demo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #f2efe9;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 12px;
+        background: #1d2329;
+        color: #fff;
+        font-size: 14px;
+        flex-wrap: wrap;
+      }
+      header strong {
+        font-size: 15px;
+      }
+      header a,
+      header button {
+        color: #cfe3ff;
+        background: none;
+        border: 1px solid #44505c;
+        border-radius: 6px;
+        padding: 3px 8px;
+        font: inherit;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      main {
+        flex: 1;
+        min-height: 0;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #14181c;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Map Editor</strong>
+      <span>Datos de ejemplo:</span>
+      <button data-sample="red_abastecimiento.geojson">Red de abastecimiento (3D)</button>
+      <button data-sample="calles.geojson">Calles (3D)</button>
+      <button data-sample="parcelas.zip">Parcelas (Shapefile)</button>
+      <button data-sample="hidrantes.gpkg">Hidrantes (GeoPackage)</button>
+    </header>
+    <main>
+      <map-editor id="editor" basemap="osm" center="-3.7,40.2" zoom="5.3" storage-key="demo" sql-wasm-url="/sql-wasm.wasm"></map-editor>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
