@@ -1,0 +1,16 @@
+{
+  "name": "map-editor",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build": "pnpm --filter \"./packages/**\" -r build",
+    "test": "pnpm --filter @map-editor/core test",
+    "typecheck": "pnpm --filter \"./packages/**\" --filter demo -r typecheck",
+    "dev": "pnpm --filter demo dev",
+    "e2e": "pnpm --filter demo e2e"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}

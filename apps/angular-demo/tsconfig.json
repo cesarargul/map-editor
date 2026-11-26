@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "strict": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": false,
+    "types": [],
+    "paths": {
+      "@map-editor/angular": [
+        "../../packages/angular/dist"
+      ]
+    }
+  },
+  "angularCompilerOptions": {
+    "strictTemplates": true
+  },
+  "files": [
+    "src/main.ts"
+  ]
+}

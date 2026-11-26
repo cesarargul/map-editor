@@ -71,3 +71,20 @@ Descubrir → Recolectar GetCapabilities → Normalizar → Enriquecer con IA �
 - Pérdida de Z en librerías de terceros → tests de ida y vuelta por formato.
 - Límites de Shapefile (nombres de campo de 10 caracteres, codificación) → avisos al exportar.
 - Atribuciones obligatorias (IGN CC BY 4.0, OSM ODbL).
+
+## Estado de la fase 1 (completada)
+
+Implementado y verificado con 32 pruebas unitarias (Vitest) y 10 pruebas en navegador (Playwright):
+
+- Núcleo headless `@map-editor/core`: `FeatureStore` con transacciones e historial, `Snapper` con R-tree incremental, lectores/escritores propios (Shapefile con Z, WKB, GeoPackage), reproyección con conservación de Z, autoguardado en IndexedDB.
+- `<map-editor>` (Lit) con barra de herramientas, panel de capas, formulario y tabla de atributos, diálogo de exportación, configuración de snapping (matriz y tipos por capa), selector de mapa base, barra de estado y recuperación de sesión.
+- `<me-map-editor>` para Angular 22 (standalone, signals, compatible con zoneless) verificado en `apps/angular-demo`.
+
+Decisiones tomadas durante la implementación:
+
+- **Worker de MapLibre 6**: con un bundler hay que indicar su URL (`workerUrl` / `setMapLibreWorkerUrl`). El envoltorio Angular crea `<map-editor>` ya configurado para evitar la carrera con el primer ciclo de detección de cambios en modo zoneless.
+- **El Web Component no empaqueta sus dependencias** (núcleo, Lit, MapLibre): las resuelve la aplicación, sin duplicados.
+- **Capas de destino al dibujar**: si la capa activa no admite el tipo de geometría, se crea una capa nueva en memoria en lugar de mezclar tipos.
+- **Mover entidades conserva la Z** (desplazamiento en planta). Arrastrar un vértice conserva su Z salvo que se enganche a otro elemento, en cuyo caso la hereda.
+
+Pendiente de verificar con red: el entorno de desarrollo no tenía acceso a `tile.openstreetmap.org`, `www.ign.es`, `vt-mapabase.idee.es` ni `tiles.openfreemap.org`, así que las URL de los mapas base están configuradas según la documentación pública pero no se han visto pintar.

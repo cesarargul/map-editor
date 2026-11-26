@@ -1,0 +1,30 @@
+{
+  "name": "@map-editor/web-component",
+  "version": "0.1.0",
+  "description": "Web Component <map-editor> (Lit) con interfaz completa para el editor vectorial.",
+  "type": "module",
+  "main": "./dist/map-editor.js",
+  "module": "./dist/map-editor.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/types/index.d.ts", "import": "./dist/map-editor.js" }
+  },
+  "files": ["dist"],
+  "sideEffects": true,
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@map-editor/core": "workspace:*",
+    "lit": "^3.3.3"
+  },
+  "peerDependencies": {
+    "maplibre-gl": "^6.0.0"
+  },
+  "devDependencies": {
+    "maplibre-gl": "^6.19.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.4.0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/copy-assets.mjs",
+    "samples": "node scripts/make-samples.mjs",
+    "dev": "pnpm assets && vite",
+    "build": "pnpm assets && vite build",
+    "preview": "vite preview --port 4173",
+    "e2e": "pnpm build && playwright test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@map-editor/web-component": "workspace:*",
+    "maplibre-gl": "^6.19.0",
+    "sql.js": "^1.17.0"
+  },
+  "devDependencies": {
+    "@map-editor/core": "workspace:*",
+    "@playwright/test": "1.63.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.4.0",
+    "@types/node": "^22.10.0"
+  }
+}
