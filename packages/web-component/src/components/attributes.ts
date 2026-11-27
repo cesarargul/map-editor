@@ -46,20 +46,39 @@ export function fieldInput(field: FieldDef, value: unknown, onChange: (v: unknow
 
 /** Formulario de atributos de la entidad seleccionada y gestión de campos. */
 export class MeAttributePanel extends EditorConsumer {
-  static override properties = { ...EditorConsumer.properties, addingField: { state: true } };
+  static override properties = { ...EditorConsumer.properties, addingField: { state: true }, dismissible: { type: Boolean }, collapsed: { type: Boolean } };
   declare addingField: boolean;
+  /** Pantallas estrechas: muestra los botones para plegar y cerrar el panel. */
+  declare dismissible: boolean;
+  /** Solo se ve la cabecera (nombre de la capa y estado), para no tapar el mapa. */
+  declare collapsed: boolean;
 
   static override styles = [
     theme,
     controls,
     css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
       }
       .wrap {
         padding: 8px 12px 12px;
-        max-height: 45vh;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow: auto;
+      }
+      .wrap.collapsed {
+        padding-bottom: 6px;
+      }
+      .wrap.collapsed header {
+        margin-bottom: 0;
+      }
+      .head-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
       }
       header {
         display: flex;
@@ -97,6 +116,8 @@ export class MeAttributePanel extends EditorConsumer {
   constructor() {
     super();
     this.addingField = false;
+    this.dismissible = false;
+    this.collapsed = false;
     this.watch = ['selection-changed', 'features-changed', 'layers-changed'];
   }
 
@@ -106,9 +127,9 @@ export class MeAttributePanel extends EditorConsumer {
     const sel = ed.getSelection();
     if (sel.length === 0) return html`<div class="wrap muted">Selecciona una entidad para ver y editar sus atributos.</div>`;
     if (sel.length > 1) {
-      return html`<div class="wrap">
-        <header><h3>${sel.length} entidades seleccionadas</h3></header>
-        <button class="outline" @click=${() => ed.deleteSelected()}>${icons.trash} Borrar selección</button>
+      return html`<div class="wrap ${this.collapsed ? 'collapsed' : ''}">
+        <header><h3>${sel.length} entidades seleccionadas</h3><span class="head-actions">${this.toggleButton()}${this.closeButton()}</span></header>
+        ${this.collapsed ? nothing : html`<button class="outline" @click=${() => ed.deleteSelected()}>${icons.trash} Borrar selección</button>`}
       </div>`;
     }
     const ref = sel[0]!;
@@ -116,20 +137,39 @@ export class MeAttributePanel extends EditorConsumer {
     const f = ed.store.getFeature(ref.layerId, ref.featureId);
     if (!layer || !f) return html``;
     const editable = layer.editable;
-    return html`<div class="wrap">
+    return html`<div class="wrap ${this.collapsed ? 'collapsed' : ''}">
       <header>
         <h3>Atributos · ${layer.name}</h3>
-        <span class="badge ${f.status}" title="Estado">${f.status === 'original' ? nothing : STATUS_LABEL[f.status]}</span>
+        <span class="head-actions">
+          <span class="badge ${f.status}" title="Estado">${f.status === 'original' ? nothing : STATUS_LABEL[f.status]}</span>
+          ${this.toggleButton()}${this.closeButton()}
+        </span>
       </header>
-      ${this.geometryInfo(f)}
-      <form @submit=${(e: Event) => e.preventDefault()}>
-        ${layer.fields.map(
-          (fd) => html`<label title="${fd.name} (${TYPE_LABEL[fd.type]})">${fd.name}</label>
-            ${fieldInput(fd, f.properties[fd.name], (v) => ed.setFeatureProperties(ref.layerId, ref.featureId, { [fd.name]: v }), !editable)}`,
-        )}
-      </form>
-      ${editable ? this.renderAddField(layer) : nothing}
+      ${this.collapsed
+        ? nothing
+        : html`${this.geometryInfo(f)}
+            <form @submit=${(e: Event) => e.preventDefault()}>
+              ${layer.fields.map(
+                (fd) => html`<label title="${fd.name} (${TYPE_LABEL[fd.type]})">${fd.name}</label>
+                  ${fieldInput(fd, f.properties[fd.name], (v) => ed.setFeatureProperties(ref.layerId, ref.featureId, { [fd.name]: v }), !editable)}`,
+              )}
+            </form>
+            ${editable ? this.renderAddField(layer) : nothing}`}
     </div>`;
+  }
+
+  private toggleButton() {
+    return this.dismissible
+      ? html`<button class="icon" title=${this.collapsed ? 'Mostrar atributos' : 'Ocultar atributos'} aria-label=${this.collapsed ? 'Mostrar atributos' : 'Ocultar atributos'} aria-expanded=${!this.collapsed} @click=${() => this.fire('me-toggle-attributes')}>
+          ${this.collapsed ? icons.up : icons.down}
+        </button>`
+      : nothing;
+  }
+
+  private closeButton() {
+    return this.dismissible
+      ? html`<button class="icon" title="Cerrar atributos" aria-label="Cerrar atributos" @click=${() => this.fire('me-close-attributes')}>${icons.close}</button>`
+      : nothing;
   }
 
   private geometryInfo(f: EditorFeature) {

@@ -135,6 +135,22 @@ await editor.downloadLayer(capa.id);                      // mismo formato y CRS
 await editor.exportLayer(capa.id, { format: 'gpkg', crs: 'EPSG:25830', scope: 'changes' });
 ```
 
+## Tabla de vértices
+
+La herramienta **Vértices** (botón de lista en la barra, atajo `E`) funciona como *Seleccionar* y, al elegir una entidad, abre abajo la tabla de sus vértices:
+
+- **Consultar:** número, coordenadas X, Y y Z, tipo (extremo, vértice o punto), parte (exterior, hueco, línea 2…), distancia horizontal al vértice anterior y acumulada, y la longitud o el perímetro total.
+- **Editar:** las coordenadas son campos editables; se confirman al terminar de editar y un valor no válido se descarta. Se muestran en el sistema de la capa (p. ej. ETRS89 / UTM 30N) o en WGS84, a elegir. Solo cambia lo que editas: el resto del vértice conserva su valor. Cada cambio es una transacción que se puede deshacer.
+- **Localizar:** tocar una fila marca el vértice en el mapa (y lo centra si estaba fuera de la vista) y tocar un vértice en el mapa marca su fila; «Ir al vértice» acerca el mapa.
+- **Insertar y borrar:** insertar crea un vértice en el punto medio del segmento siguiente (con su cota); borrar rechaza dejar una línea con menos de 2 vértices o un anillo con menos de 3.
+- En una capa bloqueada la tabla es de solo lectura. La Z solo se edita en capas 3D.
+
+API: `editor.updateVertex(capa, entidad, ruta, { x, y, z }, crs)`, `deleteVertex`, `insertVertexAfter`, `focusVertex`, `zoomToVertex`, y los cálculos puros `describeVertices(geometría)` y `lengthM(geometría)`.
+
+## Paneles
+
+En escritorio, los paneles de capas y de atributos van en una columna y **cada uno tiene su propio scroll**. En pantallas estrechas (móvil) el botón de capas despliega la lista, y los atributos de la entidad seleccionada salen solos en una hoja inferior que aparece **plegada** (solo la cabecera, para no tapar el mapa); se despliega con la flecha y se cierra con la X hasta la siguiente selección. No aparece mientras se dibuja ni con la tabla de vértices abierta.
+
 ## Herramientas de dibujo y capa activa
 
 Las herramientas de dibujo se dibujan siempre en la **capa activa** y solo están disponibles cuando esta es editable, visible y del tipo correspondiente: *punto* en capas de puntos, *línea* en capas de líneas y *polígono* en capas de polígonos (las capas de tipo mixto admiten las tres). La barra solo muestra las que sirven; si cambias de capa mientras dibujas, vuelve a *Seleccionar*. El núcleo lo exige también por API y atajos: `editor.getAvailableTools()`, `editor.isToolAvailable(id)` y el evento `available-tools-changed`.
@@ -171,7 +187,7 @@ La configuración es JSON serializable. Desde la interfaz se edita con el botón
 
 | Tecla | Acción |
 |---|---|
-| V · P · L · G · M | Seleccionar · Punto · Línea · Polígono · Mover (P, L y G solo si la capa activa es de ese tipo) |
+| V · P · L · G · M · E | Seleccionar · Punto · Línea · Polígono · Mover · Tabla de vértices (P, L y G solo si la capa activa es de ese tipo) |
 | S | Activar/desactivar snapping |
 | Ctrl+Z · Ctrl+Y (Ctrl+Mayús+Z) | Deshacer · Rehacer |
 | Supr / Retroceso | Borrar selección (en dibujo: quitar el último vértice) |

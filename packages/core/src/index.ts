@@ -4,7 +4,8 @@ export { FeatureStore, inferFields, type HistoryEntry, type StoreEvents, type Ne
 export { Snapper, type SnapResult, type SnapQuery, lerpCoord } from './snapping/snapper.js';
 export { DEFAULT_SNAP_CONFIG, ALL_SNAP_TYPES, normalizeSnapConfig, resolveTargets, type SnapConfig, type SnapType, type SnapTargetOptions } from './snapping/config.js';
 export * from './geom/coords.js';
-export { KNOWN_CRS, registerCrs, resolveCrs, normalizeCrsCode, transformGeometry, guessCrs, wktForCrs } from './crs/crs.js';
+export * from './geom/vertex-info.js';
+export { KNOWN_CRS, registerCrs, resolveCrs, normalizeCrsCode, transformGeometry, transformPosition, isCrsKnown, epsgNumber, guessCrs, wktForCrs } from './crs/crs.js';
 export {
   readFiles,
   writeLayer,

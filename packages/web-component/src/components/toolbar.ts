@@ -10,6 +10,7 @@ const TOOLS: Array<{ id: ToolId; label: string; key: string; icon: keyof typeof 
   { id: 'draw-line', label: 'Dibujar línea', key: 'L', icon: 'line', help: 'Clic: añadir vértice · Doble clic o Intro: terminar · Retroceso: quitar último · Esc: cancelar' },
   { id: 'draw-polygon', label: 'Dibujar polígono', key: 'G', icon: 'polygon', help: 'Clic: añadir vértice · Clic en el primero, doble clic o Intro: cerrar · Esc: cancelar' },
   { id: 'move', label: 'Mover entidades', key: 'M', icon: 'move', help: 'Arrastrar una entidad o la selección. El vértice más cercano al cursor se engancha.' },
+  { id: 'vertices', label: 'Tabla de vértices', key: 'E', icon: 'vertices', help: 'Selecciona una entidad para listar sus vértices y editar sus coordenadas. Toca un vértice en el mapa o una fila de la tabla para localizarlo; también se pueden arrastrar, insertar y borrar.' },
 ];
 
 export const TOOL_HELP = Object.fromEntries(TOOLS.map((t) => [t.id, t.help])) as Record<ToolId, string>;

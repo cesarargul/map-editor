@@ -8,6 +8,7 @@ export const icons = {
   point: icon(svg`<circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/>`),
   line: icon(svg`<circle cx="5" cy="19" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="19" cy="15" r="2"/><path d="M6.5 17.5l4-8M13.5 9.5l4 4"/>`),
   polygon: icon(svg`<path d="M12 3l8 6-3 11H7L4 9z"/>`),
+  vertices: icon(svg`<circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h11M10 12h11M10 18h11"/>`),
   move: icon(svg`<path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/>`),
   trash: icon(svg`<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>`),
   undo: icon(svg`<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>`),

@@ -52,6 +52,9 @@ export class MapEditorElement extends LitElement {
     dialog: { state: true },
     tableOpen: { state: true },
     panelOpen: { state: true },
+    narrow: { state: true },
+    attrDismissed: { state: true },
+    attrExpanded: { state: true },
     recoverable: { state: true },
     busyLabel: { state: true },
   };
@@ -73,6 +76,14 @@ export class MapEditorElement extends LitElement {
   declare dialog: { kind: 'export'; layerId: string } | { kind: 'snap' } | null;
   declare tableOpen: boolean;
   declare panelOpen: boolean;
+  /** Pantalla estrecha (móvil): los paneles se muestran como hoja inferior. */
+  declare narrow: boolean;
+  /** El usuario ha cerrado la hoja de atributos de la selección actual (móvil). */
+  declare attrDismissed: boolean;
+  /** Hoja de atributos desplegada (móvil): por defecto solo se ve su cabecera. */
+  declare attrExpanded: boolean;
+  private mq: MediaQueryList | null = null;
+  private onMq = (e: MediaQueryListEvent) => (this.narrow = e.matches);
   declare recoverable: SessionSummary | null;
   declare busyLabel: string | null;
   private busyShownAt = 0;
@@ -129,23 +140,37 @@ export class MapEditorElement extends LitElement {
         left: 10px;
         z-index: 3;
       }
+      /* Cada panel tiene su propio scroll: el contenedor no se desplaza */
       .side {
         position: absolute;
-        top: 10px;
+        top: 56px;
         right: 54px;
         width: min(340px, calc(100% - 120px));
-        max-height: calc(100% - 70px);
+        max-height: calc(100% - 120px);
         display: flex;
         flex-direction: column;
         gap: 8px;
         z-index: 3;
-        overflow: auto;
+        overflow: hidden;
+        pointer-events: none;
       }
-      .side.closed {
-        width: auto;
+      .side > * {
+        pointer-events: auto;
+      }
+      me-layer-panel {
+        flex: 0 1 auto;
+        max-height: 55%;
+        min-height: min(175px, 55%);
+      }
+      me-attribute-panel {
+        flex: 0 1 auto;
+        min-height: 0;
       }
       .side-toggle {
-        align-self: flex-end;
+        position: absolute;
+        top: 10px;
+        right: 54px;
+        z-index: 3;
       }
       .bottom-left {
         position: absolute;
@@ -312,11 +337,20 @@ export class MapEditorElement extends LitElement {
           bottom: 64px;
         }
         .side {
+          left: 10px;
           right: 10px;
           top: auto;
           bottom: 56px;
-          width: calc(100% - 20px);
-          max-height: 45%;
+          width: auto;
+          max-height: 52%;
+        }
+        me-layer-panel {
+          max-height: 50%;
+        }
+        /* Debajo de los controles de zoom y la brújula del mapa */
+        .side-toggle {
+          top: 106px;
+          right: 10px;
         }
         .toolbar {
           right: 54px;
@@ -328,11 +362,6 @@ export class MapEditorElement extends LitElement {
           transform: none;
           top: 70px;
           bottom: auto;
-        }
-        .side.closed {
-          bottom: auto;
-          top: 64px;
-          width: auto;
         }
       }
     `,
@@ -357,7 +386,10 @@ export class MapEditorElement extends LitElement {
     this.dialog = null;
     this.tableOpen = false;
     // En pantallas pequeñas los paneles empiezan plegados para dejar sitio al mapa
-    this.panelOpen = typeof matchMedia === 'undefined' || !matchMedia('(max-width: 640px)').matches;
+    this.narrow = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px)').matches;
+    this.panelOpen = !this.narrow;
+    this.attrDismissed = false;
+    this.attrExpanded = false;
     this.recoverable = null;
     this.busyLabel = null;
     this.whenReady = new Promise((r) => (this.resolveReady = r));
@@ -367,6 +399,11 @@ export class MapEditorElement extends LitElement {
     super.connectedCallback();
     // Enfocable al hacer clic en cualquier zona del componente (atajos de teclado)
     if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
+    if (typeof matchMedia !== 'undefined') {
+      this.mq = matchMedia('(max-width: 640px)');
+      this.narrow = this.mq.matches;
+      this.mq.addEventListener('change', this.onMq);
+    }
   }
 
   private has(part: UiPart): boolean {
@@ -402,6 +439,11 @@ export class MapEditorElement extends LitElement {
       ed.on('message', (m) => this.toast(m.level, m.text)),
       ed.on('session-recoverable', (s) => (this.recoverable = s)),
       ed.on('busy-changed', (b) => this.onBusy(b.busy, b.label)),
+      ed.on('tool-changed', () => this.requestUpdate()), // la herramienta «Vértices» abre su tabla abajo
+      ed.on('selection-changed', () => {
+        this.attrDismissed = false; // una selección nueva vuelve a mostrar los atributos
+        this.requestUpdate();
+      }),
       ed.on('features-changed', (e) => this.emit('editor-change', e)),
       ed.on('selection-changed', (e) => this.emit('selection-change', e)),
       ed.on('layers-changed', (e) => this.emit('layers-change', e)),
@@ -453,6 +495,7 @@ export class MapEditorElement extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.mq?.removeEventListener('change', this.onMq);
     if (this.busyHideTimer) clearTimeout(this.busyHideTimer);
     this.cleanup.forEach((c) => c());
     this.cleanup = [];
@@ -493,20 +536,10 @@ export class MapEditorElement extends LitElement {
         ${ed
           ? html`
               ${this.has('toolbar') ? html`<me-toolbar class="toolbar" .editor=${ed} @me-open-snap-settings=${() => (this.dialog = { kind: 'snap' })}></me-toolbar>` : nothing}
-              ${this.has('layers') || this.has('attributes')
-                ? html`<div class="side ${this.panelOpen ? '' : 'closed'}">
-                    <button class="panel side-toggle icon" title=${this.panelOpen ? 'Ocultar paneles' : 'Mostrar paneles'} aria-label="Paneles" aria-expanded=${this.panelOpen} @click=${() => (this.panelOpen = !this.panelOpen)}>
-                      ${this.panelOpen ? icons.close : icons.layers}
-                    </button>
-                    ${this.panelOpen
-                      ? html`${this.has('layers') ? html`<me-layer-panel class="panel" .editor=${ed} @me-open-export=${(e: CustomEvent<{ layerId: string }>) => (this.dialog = { kind: 'export', layerId: e.detail.layerId })}></me-layer-panel>` : nothing}
-                        ${this.has('attributes') ? html`<me-attribute-panel class="panel" .editor=${ed}></me-attribute-panel>` : nothing}`
-                      : nothing}
-                  </div>`
-                : nothing}
+              ${this.renderSide(ed)}
               <div class="bottom-left">
                 ${this.has('basemaps') ? html`<me-basemap-switcher .editor=${ed}></me-basemap-switcher>` : nothing}
-                ${this.has('table') && !this.tableOpen
+                ${this.has('table') && !this.tableOpen && ed.getTool() !== 'vertices'
                   ? html`<button class="panel" title="Tabla de atributos" @click=${() => (this.tableOpen = true)}>${icons.table} Tabla</button>`
                   : nothing}
                 ${this.has('status') ? html`<me-status-bar .editor=${ed}></me-status-bar>` : nothing}
@@ -527,8 +560,38 @@ export class MapEditorElement extends LitElement {
           : nothing}
         ${ed && this.dialog?.kind === 'snap' ? html`<me-snap-settings .editor=${ed} @me-close-dialog=${() => (this.dialog = null)}></me-snap-settings>` : nothing}
       </div>
-      ${ed && this.tableOpen ? html`<div class="table"><me-attribute-table .editor=${ed} @me-close-table=${() => (this.tableOpen = false)}></me-attribute-table></div>` : nothing}
+      ${ed && ed.getTool() === 'vertices'
+        ? html`<div class="table"><me-vertex-table .editor=${ed} @me-close-vertices=${() => ed.setTool('select')}></me-vertex-table></div>`
+        : ed && this.tableOpen
+          ? html`<div class="table"><me-attribute-table .editor=${ed} @me-close-table=${() => (this.tableOpen = false)}></me-attribute-table></div>`
+          : nothing}
     </div>`;
+  }
+
+  /**
+   * Paneles laterales. En escritorio, capas y atributos van en una columna, cada uno con su scroll.
+   * En pantallas estrechas son una hoja inferior: las capas bajo el botón y los atributos aparecen
+   * solos al seleccionar una entidad (se pueden cerrar).
+   */
+  private renderSide(ed: MapEditor) {
+    const hasLayers = this.has('layers');
+    const hasAttrs = this.has('attributes');
+    if (!hasLayers && !hasAttrs) return nothing;
+    const tool = ed.getTool();
+    const selected = ed.getSelection().length > 0;
+    const showLayers = hasLayers && this.panelOpen;
+    const showAttrs = hasAttrs && (this.narrow ? selected && !this.attrDismissed && (tool === 'select' || tool === 'move') : this.panelOpen);
+    return html`
+      <button class="panel side-toggle icon" title=${this.panelOpen ? 'Ocultar paneles' : 'Mostrar paneles'} aria-label="Paneles" aria-expanded=${this.panelOpen} @click=${() => (this.panelOpen = !this.panelOpen)}>
+        ${this.panelOpen ? icons.close : icons.layers}
+      </button>
+      ${showLayers || showAttrs
+        ? html`<div class="side">
+            ${showLayers ? html`<me-layer-panel class="panel" .editor=${ed} @me-open-export=${(e: CustomEvent<{ layerId: string }>) => (this.dialog = { kind: 'export', layerId: e.detail.layerId })}></me-layer-panel>` : nothing}
+            ${showAttrs ? html`<me-attribute-panel class="panel" .editor=${ed} .dismissible=${this.narrow} .collapsed=${this.narrow && !this.attrExpanded} @me-toggle-attributes=${() => (this.attrExpanded = !this.attrExpanded)} @me-close-attributes=${() => (this.attrDismissed = true)}></me-attribute-panel>` : nothing}
+          </div>`
+        : nothing}
+    `;
   }
 
   private renderRecovery() {

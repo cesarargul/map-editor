@@ -14,10 +14,14 @@ type State =
  * Seleccionar (clic, Mayús+clic para añadir/quitar, Mayús+arrastrar para rectángulo)
  * y editar vértices de la entidad seleccionada:
  * arrastrar vértice, arrastrar punto medio para insertar, Alt+clic para borrar.
+ *
+ * Con el id `vertices` es la herramienta «Vértices»: se comporta igual, pero la interfaz muestra
+ * la tabla de vértices de la entidad seleccionada y las asas se ven también en capas bloqueadas.
  */
 export class SelectTool implements Tool {
-  readonly id = 'select' as const;
   private ctx!: ToolContext;
+
+  constructor(readonly id: 'select' | 'vertices' = 'select') {}
   private state: State = { kind: 'idle' };
   private suppressClick = false;
   /** Vértice tocado sin arrastrar: se puede borrar con `deleteActiveVertex()` (pantallas táctiles). */
@@ -51,6 +55,16 @@ export class SelectTool implements Tool {
     if (e.shiftKey) {
       e.preventDefault();
       this.state = { kind: 'box', start: e.point, end: e.point };
+      return;
+    }
+    // «Vértices» permite elegir un vértice (sin editarlo) también en una capa bloqueada
+    const sel = this.ctx.getSelection();
+    if (this.id === 'vertices' && sel.length === 1 && !this.ctx.isEditable(sel[0]!.layerId)) {
+      const h = this.ctx.hitHandle(e.point);
+      if (h?.kind === 'vertex') {
+        this.suppressClick = true;
+        this.setActiveVertex({ ref: sel[0]!, path: h.path });
+      }
       return;
     }
     const target = this.editTarget();
@@ -122,7 +136,13 @@ export class SelectTool implements Tool {
     const t = this.activeVertex;
     const sel = this.ctx.getSelection();
     const valid = !!t && sel.length === 1 && sameRef(sel[0]!, t.ref);
-    return { activeVertex: valid };
+    return { activeVertex: valid, activeVertexPath: valid ? t!.path : null };
+  }
+
+  /** Marca (o desmarca con `null`) un vértice de la entidad seleccionada, p. ej. al elegir su fila en la tabla. */
+  focusVertex(ref: FeatureRef | null, path?: VertexPath): void {
+    this.setActiveVertex(ref && path ? { ref, path } : null);
+    this.ctx.redraw();
   }
 
   /** Borra el vértice activo (el último tocado sin arrastrar). */
@@ -193,7 +213,9 @@ export class SelectTool implements Tool {
       out.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: ring }, properties: { kind: 'box' } });
       return out;
     }
-    const target = this.editTarget();
+    // «Vértices» también enseña las asas de una capa bloqueada (solo lectura)
+    const sel = this.ctx.getSelection();
+    const target = this.id === 'vertices' && sel.length === 1 ? sel[0]! : this.editTarget();
     if (!target) return out;
     const geometry = s.kind === 'vertex' ? s.geometry : this.ctx.store.getFeature(target.layerId, target.featureId)?.geometry;
     if (!geometry) return out;
