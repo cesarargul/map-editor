@@ -18,7 +18,10 @@ export class MeLayerPanel extends EditorConsumer {
     controls,
     css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
       }
       header {
         display: flex;
@@ -31,7 +34,8 @@ export class MeLayerPanel extends EditorConsumer {
         list-style: none;
         margin: 0;
         padding: 4px;
-        max-height: 40vh;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow: auto;
       }
       li {

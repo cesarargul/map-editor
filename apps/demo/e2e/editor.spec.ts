@@ -345,7 +345,7 @@ test('las herramientas de dibujo solo aparecen si la capa activa es de ese tipo'
   // Sin capa activa tampoco
   await page.evaluate(() => window.editor.setActiveLayer(null));
   for (const l of ['Dibujar punto', 'Dibujar línea', 'Dibujar polígono']) await expect(draw(l)).toHaveCount(0);
-  expect(await page.evaluate(() => window.editor.getAvailableTools())).toEqual(['select', 'move']);
+  expect(await page.evaluate(() => window.editor.getAvailableTools())).toEqual(['select', 'move', 'vertices']);
 });
 
 test('capa nueva enganchada a elementos 3D: pasa a 3D y el snap sobre lo dibujado devuelve Z', async ({ page }) => {
@@ -413,6 +413,218 @@ test('capa 3D: los vértices libres no recuperan Z=0 y se puede fijar la Z por d
   await page.mouse.click(q1.x, q1.y);
   await page.mouse.dblclick(q2.x, q2.y);
   await expect.poll(lastZ).toEqual([12.5, 12.5]);
+});
+
+/** Selecciona la tubería T-001 (3 vértices) de la red de ejemplo y abre la tabla de vértices. */
+async function openVertexTable(page: Page) {
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await focusOn(page, 440100, 4474000, 15);
+  const mid = await toScreen(page, await utm(page, 440100, 4474000));
+  await page.mouse.click(mid.x, mid.y);
+  await expect(page.locator('me-attribute-panel input[aria-label="codigo"]')).toHaveValue('T-001');
+  await page.locator('me-toolbar button[aria-label="Tabla de vértices"]').click();
+  await expect(page.locator('me-vertex-table tbody tr')).toHaveCount(3);
+}
+
+/** Vértice de la entidad seleccionada, en ETRS89 / UTM 30N. */
+const vertexUtm = (page: Page, i: number) =>
+  page.evaluate((idx) => {
+    const s = window.editor.getSelection()[0]!;
+    const g = window.editor.store.getFeature(s.layerId, s.featureId)!.geometry as unknown as { coordinates: number[][] };
+    const c = g.coordinates[idx]!;
+    const u = window.mapEditorCore.transformGeometry({ type: 'Point', coordinates: [c[0]!, c[1]!] }, 'EPSG:4326', 'EPSG:25830') as unknown as { coordinates: number[] };
+    return { x: u.coordinates[0]!, y: u.coordinates[1]!, z: c[2] };
+  }, i);
+
+test('tabla de vértices: muestra las coordenadas de la capa y las edita con deshacer', async ({ page }) => {
+  await openVertexTable(page);
+  const row = (n: number) => page.locator('me-vertex-table tbody tr').nth(n - 1);
+  const input = (n: number, axis: string) => row(n).locator(`input[aria-label^="${axis} del vértice ${n}"]`);
+
+  // Coordenadas en el CRS de la capa (ETRS89 / UTM 30N), con su cota
+  await expect(page.locator('me-vertex-table select[aria-label="Sistema de coordenadas"]')).toContainText('EPSG:25830');
+  await expect(input(1, 'X')).toHaveValue('440000.000');
+  await expect(input(1, 'Y')).toHaveValue('4474000.000');
+  await expect(input(1, 'Z')).toHaveValue('650.000');
+  await expect(input(3, 'Z')).toHaveValue('649.500');
+  // Información: tipo y distancias (horizontales, en metros)
+  await expect(row(1).locator('td.info').nth(0)).toHaveText('Extremo');
+  await expect(row(2).locator('td.info').nth(0)).toHaveText('Vértice');
+  const d = async (n: number, col: number) => Number.parseFloat((await row(n).locator('td.info').nth(col).innerText()).replace(',', '.'));
+  expect(await d(2, 1)).toBeGreaterThan(199);
+  expect(await d(2, 1)).toBeLessThan(201);
+  expect(await d(3, 2)).toBeGreaterThan(349); // distancia acumulada
+  expect(await d(3, 2)).toBeLessThan(351);
+
+  const original = await page.evaluate(() => {
+    const s = window.editor.getSelection()[0]!;
+    return JSON.stringify(window.editor.store.getFeature(s.layerId, s.featureId)!.geometry);
+  });
+
+  // Editar solo X: Y y Z no cambian
+  await input(1, 'X').fill('440010.5');
+  await input(1, 'X').blur();
+  await expect.poll(async () => (await vertexUtm(page, 0)).x).toBeCloseTo(440010.5, 3);
+  const v0 = await vertexUtm(page, 0);
+  expect(v0.y).toBeCloseTo(4474000, 3);
+  expect(v0.z).toBe(650);
+  await expect(page.locator('me-layer-panel .badge.modified')).toHaveText('~1');
+
+  // Editar la cota
+  await input(3, 'Z').fill('700');
+  await input(3, 'Z').blur();
+  await expect.poll(async () => (await vertexUtm(page, 2)).z).toBe(700);
+
+  // Un valor que no es un número se descarta
+  await input(2, 'Y').fill('');
+  await input(2, 'Y').blur();
+  await expect(input(2, 'Y')).toHaveValue('4474000.000');
+
+  // Cada edición es una transacción: se deshacen una a una
+  await page.evaluate(() => window.editor.undo());
+  await page.evaluate(() => window.editor.undo());
+  expect(
+    await page.evaluate(() => {
+      const s = window.editor.getSelection()[0]!;
+      return JSON.stringify(window.editor.store.getFeature(s.layerId, s.featureId)!.geometry);
+    }),
+  ).toBe(original);
+  await expect(input(1, 'X')).toHaveValue('440000.000');
+});
+
+test('tabla de vértices: insertar, borrar y localizar un vértice', async ({ page }) => {
+  await openVertexTable(page);
+  const rows = page.locator('me-vertex-table tbody tr');
+
+  // Insertar después del 1: el nuevo queda en el punto medio del segmento, con su cota
+  await page.locator('me-vertex-table button[aria-label^="Insertar vértice después del 1"]').click();
+  await expect(rows).toHaveCount(4);
+  const mid = await vertexUtm(page, 1);
+  expect(mid.x).toBeCloseTo(440100, 1);
+  expect(mid.y).toBeCloseTo(4474000, 1);
+  expect(mid.z).toBe(650);
+  await expect(rows.nth(1)).toHaveClass(/active/); // el nuevo vértice queda marcado
+  // El último vértice de una línea no tiene segmento a continuación
+  await expect(page.locator('me-vertex-table button[aria-label^="Insertar vértice después del 4"]')).toBeDisabled();
+
+  // Borrar el recién insertado
+  await page.locator('me-vertex-table button[aria-label^="Borrar vértice 2"]').click();
+  await expect(rows).toHaveCount(3);
+  await page.evaluate(() => window.editor.undo());
+  await expect(rows).toHaveCount(4);
+  await page.evaluate(() => window.editor.undo());
+  await expect(rows).toHaveCount(3);
+
+  // No se puede dejar una línea con menos de 2 vértices
+  await page.locator('me-vertex-table button[aria-label^="Borrar vértice 3"]').click();
+  await expect(rows).toHaveCount(2);
+  const msg = page.evaluate(() => new Promise<string>((r) => window.editor.on('message', (m) => r(m.text))));
+  await page.locator('me-vertex-table button[aria-label^="Borrar vértice 2"]').click();
+  expect(await msg).toContain('muy pocos vértices');
+  await expect(rows).toHaveCount(2);
+
+  // Localizar: «Ir al vértice» marca la fila y acerca el mapa
+  await page.evaluate(() => window.editor.undo());
+  await expect(rows).toHaveCount(3);
+  await page.locator('me-vertex-table button[aria-label^="Ir al vértice 3"]').click();
+  expect(await page.evaluate(() => window.editor.getEditState().activeVertexPath)).toEqual([2]);
+  await expect.poll(() => page.evaluate(() => window.editor.map.getZoom())).toBeGreaterThanOrEqual(17);
+});
+
+test('tabla de vértices: se sincroniza con el vértice que se toca en el mapa', async ({ page }) => {
+  await openVertexTable(page);
+  const rows = page.locator('me-vertex-table tbody tr');
+  await focusOn(page, 440200, 4474000, 17);
+  const v2 = await toScreen(page, await utm(page, 440200, 4474000));
+  await page.mouse.click(v2.x, v2.y); // tocar el vértice 2 sin arrastrarlo
+  await expect(rows.nth(1)).toHaveClass(/active/);
+  expect(await page.evaluate(() => window.editor.getEditState().activeVertexPath)).toEqual([1]);
+
+  // Elegir una fila marca el vértice en el mapa (asa resaltada)
+  await rows.nth(2).locator('td.num').click();
+  await expect(rows.nth(2)).toHaveClass(/active/);
+  await expect
+    .poll(() => page.evaluate(() => window.editor.map.queryRenderedFeatures({ layers: ['me-overlay-vertex'] }).filter((f) => f.properties?.['active']).length))
+    .toBe(1);
+
+  // Seleccionar otra cosa vacía la tabla; cerrarla vuelve a «Seleccionar»
+  await page.evaluate(() => window.editor.setSelection([]));
+  await expect(page.locator('me-vertex-table')).toContainText('Selecciona una entidad');
+  await page.locator('me-vertex-table button[aria-label="Cerrar tabla de vértices"]').click();
+  await expect(page.locator('me-vertex-table')).toHaveCount(0);
+  expect(await page.evaluate(() => window.editor.getTool())).toBe('select');
+});
+
+test('tabla de vértices: WGS84 y capa bloqueada (solo lectura)', async ({ page }) => {
+  await openVertexTable(page);
+  const x1 = page.locator('me-vertex-table tbody tr').first().locator('input').first();
+  await page.locator('me-vertex-table select[aria-label="Sistema de coordenadas"]').selectOption('wgs84');
+  await expect(page.locator('me-vertex-table thead')).toContainText('Lon');
+  await expect(x1).toHaveValue(/^-3\.70\d{5}$/); // 7 decimales
+  // Editar la latitud directamente en grados
+  const y1 = page.locator('me-vertex-table tbody tr').first().locator('input').nth(1);
+  await y1.fill('40.41');
+  await y1.blur();
+  await expect.poll(() => page.evaluate(() => {
+    const s = window.editor.getSelection()[0]!;
+    return (window.editor.store.getFeature(s.layerId, s.featureId)!.geometry as unknown as { coordinates: number[][] }).coordinates[0]![1];
+  })).toBeCloseTo(40.41, 9);
+
+  // Con la capa bloqueada se puede consultar y localizar, pero no editar
+  await page.evaluate(() => window.editor.updateLayer(window.editor.getSelection()[0]!.layerId, { editable: false }));
+  await expect(page.locator('me-vertex-table .badge.ro')).toHaveText('Solo lectura');
+  await expect(x1).toBeDisabled();
+  await expect(page.locator('me-vertex-table button[aria-label^="Borrar vértice"]')).toHaveCount(0);
+  await expect(page.locator('me-vertex-table button[aria-label^="Insertar vértice"]')).toHaveCount(0);
+  await page.locator('me-vertex-table tbody tr').nth(1).locator('td.num').click();
+  await expect(page.locator('me-vertex-table tbody tr').nth(1)).toHaveClass(/active/);
+  expect(await page.evaluate(() => window.editor.updateVertex(window.editor.getSelection()[0]!.layerId, window.editor.getSelection()[0]!.featureId, [0], { x: 1 }))).toBe(false);
+});
+
+test('los paneles de capas y de atributos tienen cada uno su propio scroll', async ({ page }) => {
+  await ready(page);
+  await page.setViewportSize({ width: 1200, height: 620 });
+  await page.evaluate(() => {
+    for (let i = 1; i <= 12; i++) window.editor.createLayer(`Capa de ejemplo ${i}`, 'Point');
+    const fields = Array.from({ length: 40 }, (_, i) => ({ name: `campo_${i + 1}`, type: 'string' as const }));
+    const layer = window.editor.createLayer('Datos', 'Point', { fields });
+    const id = window.editor.store.transact('x', (tx) => tx.add(layer.id, { type: 'Point', coordinates: [-3.7, 40.4] }, {}));
+    window.editor.setSelection([{ layerId: layer.id, featureId: id }]);
+  });
+  await expect(page.locator('me-attribute-panel input[aria-label="campo_1"]')).toBeVisible();
+
+  const m = await page.evaluate(() => {
+    const root = document.querySelector('map-editor')!.shadowRoot!;
+    const side = root.querySelector('.side')!;
+    const layers = root.querySelector('me-layer-panel')!;
+    const attrs = root.querySelector('me-attribute-panel')!;
+    const ul = layers.shadowRoot!.querySelector('ul')!;
+    const wrap = attrs.shadowRoot!.querySelector('.wrap')!;
+    const before = { ul: ul.scrollTop, wrap: wrap.scrollTop };
+    wrap.scrollTop = 120;
+    const after = { ul: ul.scrollTop, wrap: wrap.scrollTop };
+    ul.scrollTop = 50;
+    const lr = layers.getBoundingClientRect();
+    const ar = attrs.getBoundingClientRect();
+    return {
+      sideScrolls: side.scrollHeight > side.clientHeight + 1,
+      ulOverflows: ul.scrollHeight > ul.clientHeight + 1,
+      wrapOverflows: wrap.scrollHeight > wrap.clientHeight + 1,
+      before,
+      after,
+      wrapAfterUl: wrap.scrollTop,
+      disjoint: lr.bottom <= ar.top + 1,
+      inViewport: ar.bottom <= innerHeight && lr.top >= 0,
+    };
+  });
+  expect(m.sideScrolls).toBe(false); // el contenedor no se desplaza: lo hace cada panel
+  expect(m.ulOverflows).toBe(true);
+  expect(m.wrapOverflows).toBe(true);
+  expect(m.after.wrap).toBeGreaterThan(0);
+  expect(m.after.ul).toBe(0); // desplazar atributos no mueve las capas
+  expect(m.wrapAfterUl).toBe(m.after.wrap); // y al revés
+  expect(m.disjoint).toBe(true);
+  expect(m.inViewport).toBe(true);
 });
 
 declare global {

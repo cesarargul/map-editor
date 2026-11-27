@@ -5,7 +5,7 @@ import type { SnapResult } from '../snapping/snapper.js';
 import type { FeatureStore } from '../store/store.js';
 import type { FeatureRef, GeometryKind, Projector, ScreenPoint } from '../types.js';
 
-export type ToolId = 'select' | 'draw-point' | 'draw-line' | 'draw-polygon' | 'move';
+export type ToolId = 'select' | 'draw-point' | 'draw-line' | 'draw-polygon' | 'move' | 'vertices';
 
 export interface ToolPointerEvent {
   point: ScreenPoint;
@@ -67,6 +67,8 @@ export interface EditState {
   canFinish: boolean;
   /** Hay un vértice activo (tocado) en la entidad seleccionada que se puede borrar. */
   activeVertex: boolean;
+  /** Ruta del vértice activo (o `null`). */
+  activeVertexPath: number[] | null;
 }
 
 export interface Tool {

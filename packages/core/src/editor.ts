@@ -1,7 +1,8 @@
 import type { Feature, Geometry, Position } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
 import { type Map as MlMap, type MapMouseEvent, type MapOptions, type MapTouchEvent, type StyleSpecification } from 'maplibre-gl';
-import { bbox, getSegments, getVertices, resolveGeometryZ } from './geom/coords.js';
+import { transformPosition } from './crs/crs.js';
+import { bbox, getSegments, getVertex, getVertices, insertVertex, removeVertex, resolveGeometryZ, setVertex } from './geom/coords.js';
 import { memorySource, readFiles, writeLayer, type ExportOptions, type ExportResult, type InputFile, type IoConfig } from './io/index.js';
 import { BASEMAP_PREFIX, defaultBasemaps, rasterStyle, type BasemapDef } from './map/basemaps.js';
 import { FID, OVERLAY_SOURCE, Renderer, sourceId, toRenderFeature } from './map/renderer.js';
@@ -11,7 +12,7 @@ import { lerpCoord, Snapper, type SnapResult } from './snapping/snapper.js';
 import { FeatureStore, type StoreEvents } from './store/store.js';
 import { DrawTool } from './tools/draw.js';
 import { MoveTool } from './tools/move.js';
-import { SelectTool, sameRef } from './tools/select.js';
+import { SelectTool, samePath, sameRef } from './tools/select.js';
 import type { EditState, Tool, ToolContext, ToolId, ToolPointerEvent } from './tools/tool.js';
 import type { FeatureRef, FieldDef, GeometryKind, LayerInfo, LayerStyle, Projector, ScreenPoint } from './types.js';
 import { downloadBlob } from './util/dropzone.js';
@@ -85,6 +86,7 @@ const TOOL_NAME: Record<ToolId, string> = {
   'draw-line': 'Dibujar línea',
   'draw-polygon': 'Dibujar polígono',
   move: 'Mover',
+  vertices: 'Vértices',
 };
 
 const KIND_NAME: Record<Exclude<GeometryKind, 'Mixed'>, string> = { Point: 'puntos', LineString: 'líneas', Polygon: 'polígonos' };
@@ -157,11 +159,12 @@ export class MapEditor {
     this.coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
     this.renderer = new Renderer(this.map, this.store, this.coarse);
     this.tools = {
-      select: new SelectTool(),
+      select: new SelectTool('select'),
       'draw-point': new DrawTool('draw-point'),
       'draw-line': new DrawTool('draw-line'),
       'draw-polygon': new DrawTool('draw-polygon'),
       move: new MoveTool(),
+      vertices: new SelectTool('vertices'),
     };
     this.tool = this.tools.select;
 
@@ -419,7 +422,7 @@ export class MapEditor {
   // --- Acciones de edición (para botones en pantallas táctiles) -------------------------------
 
   getEditState(): EditState {
-    return { tool: this.tool.id, sketchVertices: 0, canFinish: false, activeVertex: false, ...this.tool.editState?.() };
+    return { tool: this.tool.id, sketchVertices: 0, canFinish: false, activeVertex: false, activeVertexPath: null, ...this.tool.editState?.() };
   }
 
   /** Termina la línea o el polígono en curso. */
@@ -442,6 +445,111 @@ export class MapEditor {
     if (this.tool instanceof SelectTool) this.tool.deleteActiveVertex();
   }
 
+  // --- Vértices (tabla de vértices y API) --------------------------------------------------------
+
+  /** Geometría editable de una entidad (copia que se puede modificar), o `null` con aviso si la capa está bloqueada. */
+  private editableFeature(layerId: string, featureId: string): { layer: LayerInfo; geometry: Geometry } | null {
+    const layer = this.store.getLayer(layerId);
+    const feature = this.store.getFeature(layerId, featureId);
+    if (!layer || !feature?.geometry || feature.status === 'deleted') return null;
+    if (!layer.editable) {
+      this.message('warning', `La capa «${layer.name}» está bloqueada.`);
+      return null;
+    }
+    return { layer, geometry: feature.geometry };
+  }
+
+  /**
+   * Cambia las coordenadas de un vértice. `x` e `y` están en el sistema `crs` (por defecto WGS84, es decir
+   * lon/lat) y solo se modifica lo indicado: lo demás conserva su valor. Es una única transacción (se puede
+   * deshacer). Devuelve `false` si no se aplica.
+   */
+  updateVertex(layerId: string, featureId: string, path: number[], patch: { x?: number; y?: number; z?: number }, crs = 'EPSG:4326'): boolean {
+    const target = this.editableFeature(layerId, featureId);
+    if (!target) return false;
+    const current = getVertex(target.geometry, path);
+    if (!current) return false;
+    if ([patch.x, patch.y, patch.z].some((v) => v !== undefined && !Number.isFinite(v))) {
+      this.message('warning', 'El valor no es un número válido.');
+      return false;
+    }
+    let next: Position;
+    try {
+      next = [...transformPosition(current, 'EPSG:4326', crs)];
+      if (patch.x !== undefined) next[0] = patch.x;
+      if (patch.y !== undefined) next[1] = patch.y;
+      next = [...transformPosition(next, crs, 'EPSG:4326')];
+    } catch (err) {
+      this.message('warning', `No se pudo convertir desde ${crs}: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
+    if (patch.z !== undefined) next[2] = patch.z;
+    else if (current.length > 2) next[2] = current[2]!;
+    if (!Number.isFinite(next[0]) || !Number.isFinite(next[1]) || Math.abs(next[1]!) > 90 || Math.abs(next[0]!) > 180) {
+      this.message('warning', 'Las coordenadas quedan fuera de rango.');
+      return false;
+    }
+    // Sin cambio real (< 0,1 mm): no marcar la entidad como modificada
+    const same = Math.abs(next[0]! - current[0]!) < 1e-9 && Math.abs(next[1]! - current[1]!) < 1e-9 && (next[2] ?? 0) === (current[2] ?? 0) && next.length === current.length;
+    if (same) return true;
+    setVertex(target.geometry, path, next);
+    const geometry = this.finalizeGeometry(layerId, target.geometry);
+    this.store.transact('Editar vértice', (tx) => tx.setGeometry(layerId, featureId, geometry));
+    return true;
+  }
+
+  /** Borra un vértice (una transacción). Falla con aviso si la geometría quedaría con muy pocos vértices. */
+  deleteVertex(layerId: string, featureId: string, path: number[]): boolean {
+    const target = this.editableFeature(layerId, featureId);
+    if (!target) return false;
+    if (!removeVertex(target.geometry, path)) {
+      this.message('warning', 'No se puede borrar: la geometría quedaría con muy pocos vértices.');
+      return false;
+    }
+    const geometry = this.finalizeGeometry(layerId, target.geometry);
+    this.store.transact('Borrar vértice', (tx) => tx.setGeometry(layerId, featureId, geometry));
+    if (this.tool instanceof SelectTool) this.tool.focusVertex(null);
+    return true;
+  }
+
+  /** Inserta un vértice en el punto medio del segmento que sigue al indicado. Devuelve la ruta del nuevo vértice. */
+  insertVertexAfter(layerId: string, featureId: string, path: number[]): number[] | null {
+    const target = this.editableFeature(layerId, featureId);
+    if (!target) return null;
+    const segment = getSegments(target.geometry).find((s) => samePath(s.pathA, path));
+    if (!segment) {
+      this.message('warning', 'No hay un segmento a continuación de este vértice.');
+      return null;
+    }
+    insertVertex(target.geometry, segment.insertPath, lerpCoord(segment.a, segment.b, 0.5, true));
+    const geometry = this.finalizeGeometry(layerId, target.geometry);
+    this.store.transact('Insertar vértice', (tx) => tx.setGeometry(layerId, featureId, geometry));
+    this.focusVertex(layerId, featureId, segment.insertPath);
+    return segment.insertPath;
+  }
+
+  /**
+   * Marca un vértice de una entidad (la selecciona si hace falta), o quita la marca con `path = null`.
+   * Con `reveal`, centra el mapa en él si está fuera de la vista.
+   */
+  focusVertex(layerId: string, featureId: string, path: number[] | null, reveal = false): void {
+    const ref = { layerId, featureId };
+    if (path && !(this.selection.length === 1 && sameRef(this.selection[0]!, ref))) this.setSelection([ref]);
+    if (this.tool instanceof SelectTool) this.tool.focusVertex(path ? ref : null, path ?? undefined);
+    if (path && reveal) {
+      const geometry = this.store.getFeature(layerId, featureId)?.geometry;
+      const v = geometry && getVertex(geometry, path);
+      if (v && !this.map.getBounds().contains([v[0]!, v[1]!])) this.map.easeTo({ center: [v[0]!, v[1]!], duration: 300 });
+    }
+  }
+
+  /** Acerca el mapa a un vértice (como mínimo al zoom 17). */
+  zoomToVertex(layerId: string, featureId: string, path: number[]): void {
+    const geometry = this.store.getFeature(layerId, featureId)?.geometry;
+    const v = geometry && getVertex(geometry, path);
+    if (v) this.map.easeTo({ center: [v[0]!, v[1]!], zoom: Math.max(this.map.getZoom(), 17), duration: 400 });
+  }
+
   private emitEditState(): void {
     this.events.emit('edit-state-changed', this.getEditState());
   }
@@ -457,6 +565,7 @@ export class MapEditor {
     for (const r of this.selection) this.setFeatureState(r, { selected: false });
     this.selection = next;
     for (const r of next) this.setFeatureState(r, { selected: true });
+    if (this.tool instanceof SelectTool) this.tool.focusVertex(null); // el vértice marcado era de la selección anterior
     if (next.length && next.every((r) => r.layerId === next[0]!.layerId)) this.setActiveLayer(next[0]!.layerId);
     this.redraw();
     this.events.emit('selection-changed', { selection: [...next] });
@@ -811,7 +920,7 @@ export class MapEditor {
       return;
     }
     if (mod || e.altKey) return;
-    const shortcuts: Record<string, ToolId> = { v: 'select', p: 'draw-point', l: 'draw-line', g: 'draw-polygon', m: 'move' };
+    const shortcuts: Record<string, ToolId> = { v: 'select', p: 'draw-point', l: 'draw-line', g: 'draw-polygon', m: 'move', e: 'vertices' };
     const tool = shortcuts[e.key.toLowerCase()];
     if (tool) {
       this.setTool(tool);

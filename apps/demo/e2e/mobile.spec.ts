@@ -86,6 +86,101 @@ test('móvil: tabla con muchos campos (scroll lateral y X visible) y nombres lar
   await expect(page.locator('me-attribute-table')).toHaveCount(0);
 });
 
+test('móvil: los atributos aparecen al seleccionar una entidad, se pueden cerrar y el botón de paneles no tapa la brújula', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('body[data-ready=true]');
+  await page.tap('[data-sample="red_abastecimiento.geojson"]');
+  await page.waitForFunction(() => window.editor.getLayers().length === 1);
+  const attrs = page.locator('me-attribute-panel');
+  const select = (on: boolean) =>
+    page.evaluate((o) => {
+      const l = window.editor.getLayers()[0]!;
+      const f = window.editor.store.getFeatures(l.id)[0]!;
+      window.editor.setSelection(o ? [{ layerId: l.id, featureId: f.id }] : []);
+    }, on);
+
+  // Sin selección no se muestra nada; el panel de capas sigue plegado
+  await expect(attrs).toHaveCount(0);
+  await expect(page.locator('me-layer-panel')).toHaveCount(0);
+  await select(true);
+  // Aparece plegada (solo la cabecera) para no tapar la entidad seleccionada
+  await expect(attrs).toBeVisible();
+  await expect(attrs).toContainText('red_abastecimiento');
+  await expect(attrs.locator('input[aria-label="codigo"]')).toHaveCount(0);
+  await expect(page.locator('me-layer-panel')).toHaveCount(0);
+  // Se despliega y se vuelve a plegar
+  await attrs.locator('button[aria-label="Mostrar atributos"]').tap();
+  await expect(attrs.locator('input[aria-label="codigo"]')).toBeInViewport();
+  await attrs.locator('button[aria-label="Ocultar atributos"]').tap();
+  await expect(attrs.locator('input[aria-label="codigo"]')).toHaveCount(0);
+
+  // Se cierra con la X y vuelve a salir con una selección nueva
+  await attrs.locator('button[aria-label="Cerrar atributos"]').tap();
+  await expect(attrs).toHaveCount(0);
+  await select(false);
+  await select(true);
+  await expect(attrs).toBeVisible();
+
+  // No aparece mientras se dibuja
+  await page.evaluate(() => window.editor.setTool('draw-line'));
+  await expect(attrs).toHaveCount(0);
+  await page.evaluate(() => window.editor.setTool('select'));
+  await expect(attrs).toBeVisible();
+
+  // Con las capas abiertas, cada panel conserva su sitio (el de capas encima)
+  await page.locator('map-editor button[aria-label="Paneles"]').tap();
+  await expect(page.locator('me-layer-panel')).toBeVisible();
+  const boxes = await page.evaluate(() => {
+    const root = document.querySelector('map-editor')!.shadowRoot!;
+    const r = (el: Element | null) => el!.getBoundingClientRect();
+    return {
+      layers: r(root.querySelector('me-layer-panel')),
+      attrs: r(root.querySelector('me-attribute-panel')),
+      toggle: r(root.querySelector('.side-toggle')),
+      compass: r(root.querySelector('.maplibregl-ctrl-compass')),
+      vh: innerHeight,
+    };
+  });
+  expect(boxes.layers.bottom).toBeLessThanOrEqual(boxes.attrs.top + 1);
+  expect(boxes.attrs.bottom).toBeLessThanOrEqual(boxes.vh);
+  expect(boxes.toggle.top).toBeGreaterThanOrEqual(boxes.compass.bottom - 1); // no tapa la brújula
+});
+
+test('móvil: tabla de vértices (editar coordenadas y ver la X de cierre)', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('body[data-ready=true]');
+  await page.tap('[data-sample="red_abastecimiento.geojson"]');
+  await page.waitForFunction(() => window.editor.getLayers().length === 1);
+  await page.evaluate(() => {
+    const l = window.editor.getLayers()[0]!;
+    window.editor.setSelection([{ layerId: l.id, featureId: window.editor.store.getFeatures(l.id)[0]!.id }]);
+  });
+  await page.locator('me-toolbar button[aria-label="Tabla de vértices"]').tap();
+  const table = page.locator('me-vertex-table');
+  await expect(table.locator('tbody tr')).toHaveCount(3);
+  // La hoja de atributos no se superpone con la tabla de vértices
+  await expect(page.locator('me-attribute-panel')).toHaveCount(0);
+
+  const vp = page.viewportSize()!.width;
+  await expect(table.locator('button[aria-label="Cerrar tabla de vértices"]')).toBeInViewport();
+  const dims = await table.locator('.scroll').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+  expect(dims.cw).toBeLessThanOrEqual(vp);
+  expect(dims.sw).toBeGreaterThan(dims.cw); // más columnas que ancho: se desliza en horizontal
+
+  const z = table.locator('tbody tr').nth(1).locator('input[aria-label^="Z del vértice 2"]');
+  await z.fill('655.25');
+  await z.blur();
+  await expect
+    .poll(() => page.evaluate(() => {
+      const s = window.editor.getSelection()[0]!;
+      return (window.editor.store.getFeature(s.layerId, s.featureId)!.geometry as unknown as { coordinates: number[][] }).coordinates[1]![2];
+    }))
+    .toBe(655.25);
+
+  await table.locator('button[aria-label="Cerrar tabla de vértices"]').tap();
+  await expect(table).toHaveCount(0);
+});
+
 test('móvil: dibujar con toques, terminar con botón, arrastrar y borrar vértice', async ({ page, context }) => {
   if (process.env['CPU_THROTTLE']) {
     const c = await context.newCDPSession(page);
