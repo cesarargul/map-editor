@@ -24,7 +24,7 @@ export {
   type IoConfig,
 } from './io/index.js';
 export { defaultBasemaps, rasterStyle, ignWmts, type BasemapDef, type RasterBasemapLayer } from './map/basemaps.js';
-export { IndexedDbSessionStorage, MemorySessionStorage, type SessionStorage, type SavedSession, type SessionSummary, type AutosaveOptions } from './persistence/autosave.js';
+export { IndexedDbSessionStorage, MemorySessionStorage, isValidView, type SessionStorage, type SavedSession, type SavedView, type SessionSummary, type AutosaveOptions } from './persistence/autosave.js';
 export { installDropZone, downloadBlob, filesFromDataTransfer, type DropZoneOptions } from './util/dropzone.js';
 export { Emitter } from './util/emitter.js';
 export type { ToolId, Tool, ToolContext, ToolPointerEvent, EditState } from './tools/tool.js';

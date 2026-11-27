@@ -5,7 +5,7 @@ import { bbox, getSegments, getVertices, resolveGeometryZ } from './geom/coords.
 import { memorySource, readFiles, writeLayer, type ExportOptions, type ExportResult, type InputFile, type IoConfig } from './io/index.js';
 import { BASEMAP_PREFIX, defaultBasemaps, rasterStyle, type BasemapDef } from './map/basemaps.js';
 import { FID, OVERLAY_SOURCE, Renderer, sourceId, toRenderFeature } from './map/renderer.js';
-import { Autosaver, IndexedDbSessionStorage, summarize, type AutosaveOptions, type SavedSession, type SessionSummary } from './persistence/autosave.js';
+import { Autosaver, IndexedDbSessionStorage, isValidView, summarize, type AutosaveOptions, type SavedSession, type SavedView, type SessionSummary } from './persistence/autosave.js';
 import { normalizeSnapConfig, type SnapConfig } from './snapping/config.js';
 import { lerpCoord, Snapper, type SnapResult } from './snapping/snapper.js';
 import { FeatureStore, type StoreEvents } from './store/store.js';
@@ -309,10 +309,7 @@ export class MapEditor {
     if (added.length) {
       this.setActiveLayer(added.at(-1)!.id);
       this.message('info', added.length === 1 ? `Capa "${added[0]!.name}" cargada (${this.store.featureCount(added[0]!.id)} entidades).` : `${added.length} capas cargadas.`);
-      if (opts.zoom !== false) {
-        const b = added.map((l) => this.layerBounds(l.id)).reduce<[number, number, number, number] | null>((acc, x) => (!x ? acc : !acc ? x : [Math.min(acc[0], x[0]), Math.min(acc[1], x[1]), Math.max(acc[2], x[2]), Math.max(acc[3], x[3])]), null);
-        if (b) this.fitBounds(b);
-      }
+      if (opts.zoom !== false) this.fitLayers(added.map((l) => l.id));
     }
     this.events.emit('files-loaded', { layers: added, errors });
     return added;
@@ -563,6 +560,9 @@ export class MapEditor {
     }
     if (s.history && [...idMap].every(([a, b]) => a === b)) this.store.importHistory(s.history);
     this.setActiveLayer(idMap.get(s.activeLayerId ?? '') ?? this.store.getLayers().at(-1)?.id ?? null);
+    // Misma ubicación y zoom que al guardar; si la sesión es antigua y no los tiene, encuadrar las capas
+    if (isValidView(s.view)) this.map.jumpTo({ center: s.view.center, zoom: s.view.zoom, bearing: s.view.bearing, pitch: s.view.pitch });
+    else this.fitLayers([...idMap.values()]);
     this.autosaver!.paused = false;
     void this.autosaver!.flush();
     this.message('info', 'Sesión anterior recuperada.');
@@ -978,6 +978,25 @@ export class MapEditor {
     this.renderer.reload(layerId);
   }
 
+  /** Encuadra el conjunto de capas indicado. */
+  private fitLayers(ids: string[]): void {
+    const b = ids
+      .map((id) => this.layerBounds(id))
+      .reduce<[number, number, number, number] | null>((acc, x) => (!x ? acc : !acc ? x : [Math.min(acc[0], x[0]), Math.min(acc[1], x[1]), Math.max(acc[2], x[2]), Math.max(acc[3], x[3])]), null);
+    if (b) this.fitBounds(b);
+  }
+
+  /** Vista actual del mapa (ubicación, zoom y orientación). */
+  currentView(): SavedView {
+    const c = this.map.getCenter();
+    return { center: [c.lng, c.lat], zoom: this.map.getZoom(), bearing: this.map.getBearing(), pitch: this.map.getPitch() };
+  }
+
+  /** Guarda ahora mismo la sesión y la vista (p. ej. antes de navegar). */
+  async flushSession(): Promise<void> {
+    await this.autosaver?.flushAll();
+  }
+
   private layerBounds(id: string): [number, number, number, number] | null {
     let b: [number, number, number, number] | null = null;
     for (const f of this.store.getFeatures(id)) {
@@ -1008,14 +1027,20 @@ export class MapEditor {
         version: 1,
         savedAt: Date.now(),
         activeLayerId: this.activeLayer,
+        view: this.currentView(),
         layers: this.store.getLayers().map((info) => ({ info, features: this.store.getFeatures(info.id, { includeDeleted: true }).map((f) => structuredClone(f)) })),
         ...(historyEntries > 0 ? { history: this.store.exportHistory(historyEntries) } : {}),
       }),
       (savedAt) => this.events.emit('autosaved', { savedAt }),
       (err) => this.message('error', `No se pudo guardar la sesión: ${err instanceof Error ? err.message : err}`),
+      () => (this.store.getLayers().length ? this.currentView() : null),
     );
+    // Recordar la vista al mover el mapa (guardado ligero, aparte de la sesión)
+    const onMoveEnd = () => this.autosaver?.scheduleView();
+    this.map.on('moveend', onMoveEnd);
+    this.disposers.push(() => this.map.off('moveend', onMoveEnd));
     // Guardar inmediatamente al cerrar o al ocultar la pestaña
-    const flush = () => void this.autosaver?.flush();
+    const flush = () => void this.autosaver?.flushAll();
     const onVisibility = () => document.visibilityState === 'hidden' && flush();
     window.addEventListener('pagehide', flush);
     document.addEventListener('visibilitychange', onVisibility);
@@ -1025,6 +1050,8 @@ export class MapEditor {
     });
     const saved = await this.autosaver.load();
     if (saved && saved.layers.length) {
+      const view = await this.autosaver.loadView(saved);
+      if (view) saved.view = view;
       this.recoverable = saved;
       this.autosaver.paused = true;
       this.events.emit('session-recoverable', summarize(saved));

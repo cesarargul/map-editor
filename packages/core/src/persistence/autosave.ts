@@ -2,10 +2,35 @@ import { createStore, del, get, set, type UseStore } from 'idb-keyval';
 import type { HistoryEntry } from '../store/store.js';
 import type { EditorFeature, LayerInfo } from '../types.js';
 
+/** Vista del mapa: ubicación, zoom y orientación. */
+export interface SavedView {
+  center: [number, number];
+  zoom: number;
+  bearing: number;
+  pitch: number;
+}
+
+export function isValidView(v: unknown): v is SavedView {
+  const o = v as Partial<SavedView> | null | undefined;
+  return (
+    !!o &&
+    Array.isArray(o.center) &&
+    o.center.length === 2 &&
+    Number.isFinite(o.center[0]) &&
+    Number.isFinite(o.center[1]) &&
+    Math.abs(o.center[1]!) <= 90 &&
+    Number.isFinite(o.zoom) &&
+    Number.isFinite(o.bearing) &&
+    Number.isFinite(o.pitch)
+  );
+}
+
 export interface SavedSession {
   version: 1;
   savedAt: number;
   activeLayerId: string | null;
+  /** Vista al guardar. La vista más reciente se guarda aparte (`saveView`) para no reescribir las capas al mover el mapa. */
+  view?: SavedView;
   layers: Array<{ info: LayerInfo; features: EditorFeature[] }>;
   history?: { undo: HistoryEntry[]; redo: HistoryEntry[] };
 }
@@ -22,7 +47,11 @@ export interface SessionSummary {
 export interface SessionStorage {
   load(key: string): Promise<SavedSession | null>;
   save(key: string, session: SavedSession): Promise<void>;
+  /** Borra la sesión y su vista. */
   clear(key: string): Promise<void>;
+  /** Opcionales: escritura ligera de la vista del mapa, independiente de la sesión completa. */
+  loadView?(key: string): Promise<SavedView | null>;
+  saveView?(key: string, view: SavedView): Promise<void>;
 }
 
 export class IndexedDbSessionStorage implements SessionStorage {
@@ -47,11 +76,31 @@ export class IndexedDbSessionStorage implements SessionStorage {
 
   async clear(key: string): Promise<void> {
     await del(key, this.db());
+    await del(`${key}::view`, this.db());
+  }
+
+  async loadView(key: string): Promise<SavedView | null> {
+    try {
+      return ((await get(`${key}::view`, this.db())) as SavedView | undefined) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveView(key: string, view: SavedView): Promise<void> {
+    await set(`${key}::view`, view, this.db());
   }
 }
 
 export class MemorySessionStorage implements SessionStorage {
   private data = new Map<string, SavedSession>();
+  private views = new Map<string, SavedView>();
+  async loadView(key: string) {
+    return this.views.get(key) ?? null;
+  }
+  async saveView(key: string, view: SavedView) {
+    this.views.set(key, structuredClone(view));
+  }
   async load(key: string) {
     return this.data.get(key) ?? null;
   }
@@ -60,6 +109,7 @@ export class MemorySessionStorage implements SessionStorage {
   }
   async clear(key: string) {
     this.data.delete(key);
+    this.views.delete(key);
   }
 }
 
@@ -93,6 +143,7 @@ export interface AutosaveOptions {
 /** Programa guardados con retardo y evita solapes. */
 export class Autosaver {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private viewTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> | null = null;
   private pending = false;
   paused = false;
@@ -104,7 +155,43 @@ export class Autosaver {
     private readonly snapshot: () => SavedSession,
     private readonly onSaved: (savedAt: number) => void,
     private readonly onError: (err: unknown) => void,
+    /** Vista actual del mapa, o `null` si no hay nada que recordar (p. ej. no hay capas). */
+    private readonly snapshotView?: () => SavedView | null,
   ) {}
+
+  /** Programa guardar solo la vista (barato: no reescribe las capas). */
+  scheduleView(): void {
+    if (this.paused || !this.snapshotView || !this.storage.saveView) return;
+    if (this.viewTimer) clearTimeout(this.viewTimer);
+    this.viewTimer = setTimeout(() => void this.flushView(), 800);
+  }
+
+  async flushView(): Promise<void> {
+    if (this.viewTimer) {
+      clearTimeout(this.viewTimer);
+      this.viewTimer = null;
+    }
+    if (this.paused || !this.snapshotView || !this.storage.saveView) return;
+    const view = this.snapshotView();
+    if (!view) return;
+    try {
+      await this.storage.saveView(this.key, view);
+    } catch (err) {
+      this.onError(err);
+    }
+  }
+
+  /** La vista guardada más reciente (la del guardado ligero si existe; si no, la de la sesión). */
+  async loadView(session?: SavedSession | null): Promise<SavedView | null> {
+    const light = (await this.storage.loadView?.(this.key)) ?? null;
+    if (isValidView(light)) return light;
+    return isValidView(session?.view) ? session!.view! : null;
+  }
+
+  /** Guarda de inmediato la sesión y la vista. */
+  async flushAll(): Promise<void> {
+    await Promise.all([this.flush(), this.flushView()]);
+  }
 
   schedule(): void {
     if (this.paused) return;
@@ -147,5 +234,6 @@ export class Autosaver {
 
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.viewTimer) clearTimeout(this.viewTimer);
   }
 }

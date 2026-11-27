@@ -220,6 +220,61 @@ test('recupera la sesión autoguardada tras recargar', async ({ page }) => {
   await expect.poll(() => featureCount(page, 'red_abastecimiento')).toBe(3);
 });
 
+test('al recuperar la sesión se recupera también la ubicación y el zoom', async ({ page }) => {
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await page.evaluate(() => {
+    window.editor.map.jumpTo({ center: [-3.55, 40.33], zoom: 13.37, bearing: 20, pitch: 0 });
+    return new Promise((r) => window.editor.map.once('idle', r));
+  });
+  await page.evaluate(() => window.editor.flushSession());
+
+  await page.reload();
+  await page.waitForSelector('body[data-ready=true]');
+  // Antes de recuperar, el mapa está en su vista inicial
+  expect(await page.evaluate(() => window.editor.map.getZoom())).toBeLessThan(6);
+  await page.locator('map-editor .banner button.primary').click();
+  await expect(page.locator('me-layer-panel li')).toHaveCount(1);
+  const v = await page.evaluate(() => ({ c: window.editor.map.getCenter().toArray(), z: window.editor.map.getZoom(), b: window.editor.map.getBearing() }));
+  expect(v.c[0]).toBeCloseTo(-3.55, 4);
+  expect(v.c[1]).toBeCloseTo(40.33, 4);
+  expect(v.z).toBeCloseTo(13.37, 2);
+  expect(v.b).toBeCloseTo(20, 1);
+});
+
+test('una sesión guardada sin vista (versión anterior) encuadra las capas al recuperarla', async ({ page }) => {
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await page.evaluate(() => window.editor.flushSession());
+  // Simular una sesión antigua: sin la vista ligera ni la incluida en la sesión
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('map-editor');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('sessions', 'readwrite');
+          const st = tx.objectStore('sessions');
+          st.delete('demo::view');
+          const get = st.get('demo');
+          get.onsuccess = () => {
+            const s = get.result as { view?: unknown };
+            delete s.view;
+            st.put(s, 'demo');
+          };
+          tx.oncomplete = () => (db.close(), resolve());
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+  );
+  await page.reload();
+  await page.waitForSelector('body[data-ready=true]');
+  await page.locator('map-editor .banner button.primary').click();
+  await expect.poll(() => page.evaluate(() => window.editor.map.getZoom())).toBeGreaterThan(14);
+  const c = await page.evaluate(() => window.editor.map.getCenter().toArray());
+  expect(c[0]).toBeCloseTo(-3.7059, 2);
+  expect(c[1]).toBeCloseTo(40.414, 2);
+});
+
 test('cambia el mapa base sin perder las capas', async ({ page }) => {
   await loadSample(page, 'parcelas.zip');
   await page.locator('me-basemap-switcher button.trigger').click();

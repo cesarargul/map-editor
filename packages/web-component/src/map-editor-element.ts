@@ -111,10 +111,13 @@ export class MapEditorElement extends LitElement {
         inset: 0;
         display: grid;
         grid-template-rows: 1fr auto;
+        /* Sin esto la columna se ensancha hasta el contenido (p. ej. una tabla con muchos campos) */
+        grid-template-columns: minmax(0, 1fr);
       }
       .stage {
         position: relative;
         min-height: 0;
+        min-width: 0;
       }
       #map {
         position: absolute;
@@ -170,10 +173,13 @@ export class MapEditorElement extends LitElement {
         display: flex;
         flex-direction: column;
         min-height: 0;
+        min-width: 0;
+        overflow: hidden;
       }
       me-attribute-table {
         flex: 1;
         min-height: 0;
+        min-width: 0;
       }
       .drop {
         position: absolute;
@@ -290,6 +296,9 @@ export class MapEditorElement extends LitElement {
         bottom: 0;
       }
       @media (max-width: 640px) {
+        .table {
+          height: min(48vh, 380px);
+        }
         .bottom-left {
           right: 10px;
         }

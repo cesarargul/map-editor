@@ -187,6 +187,7 @@ export class MeAttributeTable extends EditorConsumer {
         display: flex;
         flex-direction: column;
         min-height: 0;
+        min-width: 0;
       }
       header {
         display: flex;
@@ -196,6 +197,9 @@ export class MeAttributeTable extends EditorConsumer {
         border-bottom: 1px solid var(--me-border);
         flex-wrap: wrap;
       }
+      header h3 {
+        min-width: 0;
+      }
       header .spacer {
         flex: 1;
       }
@@ -203,6 +207,11 @@ export class MeAttributeTable extends EditorConsumer {
         overflow: auto;
         flex: 1;
         min-height: 0;
+        min-width: 0;
+        /* Desplazamiento táctil en ambos ejes sin arrastrar la página ni el mapa */
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        touch-action: pan-x pan-y;
       }
       table {
         border-collapse: collapse;
