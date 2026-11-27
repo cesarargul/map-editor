@@ -1,7 +1,7 @@
 import type { Feature, Geometry, Position } from 'geojson';
 import * as maplibregl from 'maplibre-gl';
 import { type Map as MlMap, type MapMouseEvent, type MapOptions, type MapTouchEvent, type StyleSpecification } from 'maplibre-gl';
-import { bbox, getSegments, getVertices } from './geom/coords.js';
+import { bbox, getSegments, getVertices, resolveGeometryZ } from './geom/coords.js';
 import { memorySource, readFiles, writeLayer, type ExportOptions, type ExportResult, type InputFile, type IoConfig } from './io/index.js';
 import { BASEMAP_PREFIX, defaultBasemaps, rasterStyle, type BasemapDef } from './map/basemaps.js';
 import { FID, OVERLAY_SOURCE, Renderer, sourceId, toRenderFeature } from './map/renderer.js';
@@ -67,13 +67,42 @@ export interface EditorEvents extends Record<string, unknown> {
   autosaved: { savedAt: number };
   'files-loaded': { layers: LayerInfo[]; errors: Array<{ file: string; message: string }> };
   'edit-state-changed': EditState;
+  /** Operación larga en curso (leer ficheros, recuperar sesión, generar ficheros). */
+  'busy-changed': { busy: boolean; label: string | null };
+  /** Herramientas utilizables con la capa activa (las de dibujo dependen de su tipo de geometría). */
+  'available-tools-changed': { tools: ToolId[] };
 }
 
-const NEW_LAYER_NAME: Record<Exclude<GeometryKind, 'Mixed'>, string> = {
-  Point: 'Nuevos puntos',
-  LineString: 'Nuevas líneas',
-  Polygon: 'Nuevos polígonos',
+const DRAW_KIND: Partial<Record<ToolId, Exclude<GeometryKind, 'Mixed'>>> = {
+  'draw-point': 'Point',
+  'draw-line': 'LineString',
+  'draw-polygon': 'Polygon',
 };
+
+const TOOL_NAME: Record<ToolId, string> = {
+  select: 'Seleccionar',
+  'draw-point': 'Dibujar punto',
+  'draw-line': 'Dibujar línea',
+  'draw-polygon': 'Dibujar polígono',
+  move: 'Mover',
+};
+
+const KIND_NAME: Record<Exclude<GeometryKind, 'Mixed'>, string> = { Point: 'puntos', LineString: 'líneas', Polygon: 'polígonos' };
+
+/** Cede el control hasta que el navegador haya pintado (con límite, por si la pestaña está oculta). */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    };
+    setTimeout(finish, 80);
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
+}
 
 /**
  * Editor vectorial headless sobre MapLibre. No incluye interfaz: la interfaz (Web Component,
@@ -195,6 +224,7 @@ export class MapEditor {
     this.setSelection(this.selection.filter((r) => r.layerId !== id));
     this.store.removeLayer(id);
     if (this.activeLayer === id) this.setActiveLayer(this.store.getLayers().at(-1)?.id ?? null);
+    else this.refreshAvailableTools();
   }
 
   updateLayer(id: string, patch: Parameters<FeatureStore['updateLayer']>[1]): LayerInfo {
@@ -220,6 +250,7 @@ export class MapEditor {
     if (this.activeLayer === id) return;
     this.activeLayer = id;
     this.events.emit('active-layer-changed', { layerId: id });
+    this.refreshAvailableTools();
   }
 
   zoomToLayer(id: string): void {
@@ -259,7 +290,11 @@ export class MapEditor {
   // =========================================================================================
 
   /** Carga ficheros (File del navegador o {name, data}). Devuelve las capas añadidas. */
-  async loadFiles(files: Array<File | InputFile>, opts: { zoom?: boolean } = {}): Promise<LayerInfo[]> {
+  loadFiles(files: Array<File | InputFile>, opts: { zoom?: boolean } = {}): Promise<LayerInfo[]> {
+    return this.withBusy('Leyendo ficheros…', () => this.loadFilesNow(files, opts));
+  }
+
+  private async loadFilesNow(files: Array<File | InputFile>, opts: { zoom?: boolean }): Promise<LayerInfo[]> {
     const inputs: InputFile[] = await Promise.all(
       files.map(async (f) => ('data' in f ? f : { name: (f as File).webkitRelativePath || f.name, data: await (f as File).arrayBuffer() })),
     );
@@ -284,12 +319,32 @@ export class MapEditor {
   }
 
   /** Genera el fichero de una capa (por defecto en su formato y CRS de origen). */
-  async exportLayer(layerId: string, options: ExportOptions = {}): Promise<ExportResult> {
-    const layer = this.store.getLayer(layerId);
-    if (!layer) throw new Error(`No existe la capa ${layerId}`);
-    const res = await writeLayer(layer, this.store.getFeatures(layerId, { includeDeleted: true }), options, this.options.io);
-    for (const w of res.warnings) this.message('warning', `${layer.name}: ${w}`);
-    return res;
+  exportLayer(layerId: string, options: ExportOptions = {}): Promise<ExportResult> {
+    return this.withBusy('Generando fichero…', async () => {
+      const layer = this.store.getLayer(layerId);
+      if (!layer) throw new Error(`No existe la capa ${layerId}`);
+      const res = await writeLayer(layer, this.store.getFeatures(layerId, { includeDeleted: true }), options, this.options.io);
+      for (const w of res.warnings) this.message('warning', `${layer.name}: ${w}`);
+      return res;
+    });
+  }
+
+  /** `true` mientras hay una operación larga en curso. */
+  isBusy(): boolean {
+    return this.busyDepth > 0;
+  }
+
+  private busyDepth = 0;
+
+  /** Marca el editor como ocupado (evento `busy-changed`) y deja que el navegador pinte el aviso antes de empezar. */
+  private async withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    if (this.busyDepth++ === 0) this.events.emit('busy-changed', { busy: true, label });
+    try {
+      await nextPaint();
+      return await fn();
+    } finally {
+      if (--this.busyDepth === 0) this.events.emit('busy-changed', { busy: false, label: null });
+    }
   }
 
   /** Exporta y descarga en el navegador. */
@@ -307,9 +362,53 @@ export class MapEditor {
     return this.tool.id;
   }
 
+  /**
+   * Herramientas utilizables con la capa activa. Las de dibujo solo lo están si la capa activa es
+   * editable, visible y del tipo de geometría correspondiente (o mixta).
+   */
+  getAvailableTools(): ToolId[] {
+    return (Object.keys(this.tools) as ToolId[]).filter((id) => this.isToolAvailable(id));
+  }
+
+  isToolAvailable(id: ToolId): boolean {
+    const kind = DRAW_KIND[id];
+    if (!kind) return true;
+    const layer = this.activeLayer ? this.store.getLayer(this.activeLayer) : null;
+    if (!layer || !layer.editable || !layer.visible) return false;
+    return layer.geometryKind === 'Mixed' || layer.geometryKind === kind;
+  }
+
+  /** Explica por qué una herramienta no está disponible (para avisos). */
+  private toolUnavailableReason(id: ToolId): string {
+    const kind = DRAW_KIND[id];
+    const layer = this.activeLayer ? this.store.getLayer(this.activeLayer) : null;
+    if (!kind) return '';
+    if (!layer) return `«${TOOL_NAME[id]}» necesita una capa activa: crea una o selecciona una.`;
+    if (!layer.editable) return `«${TOOL_NAME[id]}»: la capa «${layer.name}» está bloqueada.`;
+    if (!layer.visible) return `«${TOOL_NAME[id]}»: la capa «${layer.name}» está oculta.`;
+    return `«${TOOL_NAME[id]}» necesita una capa activa de ${KIND_NAME[kind]}; «${layer.name}» es de otro tipo.`;
+  }
+
+  private availableKey = '';
+
+  /** Avisa si cambian las herramientas disponibles y abandona la actual si deja de serlo. */
+  private refreshAvailableTools(): void {
+    const tools = this.getAvailableTools();
+    const key = tools.join(',');
+    if (key !== this.availableKey) {
+      this.availableKey = key;
+      this.events.emit('available-tools-changed', { tools });
+    }
+    if (!this.isToolAvailable(this.tool.id)) this.setTool('select');
+  }
+
   setTool(id: ToolId): void {
     const next = this.tools[id];
     if (!next || next === this.tool) return;
+    if (!this.isToolAvailable(id)) {
+      this.message('warning', this.toolUnavailableReason(id));
+      return;
+    }
     this.tool.deactivate();
     this.tool = next;
     this.tool.activate(this.context);
@@ -437,10 +536,14 @@ export class MapEditor {
     return this.recoverable ? summarize(this.recoverable) : null;
   }
 
-  async restoreSession(): Promise<void> {
+  restoreSession(): Promise<void> {
     const s = this.recoverable;
     this.recoverable = null;
-    if (!s || !this.autosaver) return;
+    if (!s || !this.autosaver) return Promise.resolve();
+    return this.withBusy('Recuperando la sesión…', async () => this.restoreSessionNow(s));
+  }
+
+  private restoreSessionNow(s: SavedSession): void {
     const idMap = new Map<string, string>();
     for (const l of s.layers) {
       const id = this.store.hasLayer(l.info.id) ? undefined : l.info.id;
@@ -460,8 +563,8 @@ export class MapEditor {
     }
     if (s.history && [...idMap].every(([a, b]) => a === b)) this.store.importHistory(s.history);
     this.setActiveLayer(idMap.get(s.activeLayerId ?? '') ?? this.store.getLayers().at(-1)?.id ?? null);
-    this.autosaver.paused = false;
-    void this.autosaver.flush();
+    this.autosaver!.paused = false;
+    void this.autosaver!.flush();
     this.message('info', 'Sesión anterior recuperada.');
   }
 
@@ -527,7 +630,7 @@ export class MapEditor {
       hitHandle: (p) => self.hitHandle(p),
       isEditable: (id) => self.isEditable(id),
       drawTarget: (k) => self.drawTarget(k),
-      withZ: (c, id) => self.withZ(c, id),
+      finalizeGeometry: (id, g) => self.finalizeGeometry(id, g),
       preview: (l, f, g) => self.preview(l, f, g),
       refresh: (l) => self.refreshPreview(l),
       redraw: () => self.redraw(),
@@ -562,6 +665,7 @@ export class MapEditor {
     });
     s.on('layer-updated', ({ layer }) => {
       if (this.map.getSource(sourceId(layer.id))) this.renderer.applyStyle(layer);
+      this.refreshAvailableTools();
       layersChanged();
       this.autosaver?.schedule();
     });
@@ -834,27 +938,29 @@ export class MapEditor {
     return !!l && l.editable && l.visible;
   }
 
+  /** Capa donde se dibuja: siempre la activa (la herramienta solo está disponible si es del tipo adecuado). */
   private drawTarget(kind: Exclude<GeometryKind, 'Mixed'>): string | null {
-    const active = this.activeLayer ? this.store.getLayer(this.activeLayer) : null;
-    if (active && active.editable && active.visible) {
-      const empty = this.store.featureCount(active.id) === 0;
-      if (active.geometryKind === kind || (empty && active.source.format === 'memory')) {
-        if (active.geometryKind !== kind) this.store.updateLayer(active.id, { geometryKind: kind });
-        return active.id;
-      }
-      if (active.geometryKind === 'Mixed' && (active.source.format === 'geojson' || active.source.format === 'gpkg' || active.source.format === 'memory')) {
-        return active.id;
-      }
-    }
-    const layer = this.createLayer(NEW_LAYER_NAME[kind], kind, { hasZ: active?.source.hasZ ?? false });
-    this.message('info', active ? `La capa activa no admite este tipo de geometría: se ha creado "${layer.name}".` : `Se ha creado la capa "${layer.name}".`);
-    return layer.id;
+    const id = (Object.keys(DRAW_KIND) as ToolId[]).find((t) => DRAW_KIND[t] === kind);
+    if (!id || !this.isToolAvailable(id)) return null;
+    return this.activeLayer;
   }
 
-  private withZ(c: Position, layerId: string): Position {
-    const l = this.store.getLayer(layerId);
-    if (!l?.source.hasZ || c.length > 2) return c;
-    return [c[0]!, c[1]!, l.defaultZ];
+  /**
+   * Hace coherente la Z de una geometría con su capa antes de guardarla: completa la que falte en
+   * capas 3D, convierte en 3D una capa nueva si se enganchó a algo con cota, y descarta la Z en
+   * capas 2D de fichero. Así el snap posterior siempre encuentra Z en todos los vértices.
+   */
+  private finalizeGeometry(layerId: string, geometry: Geometry): Geometry {
+    const layer = this.store.getLayer(layerId);
+    if (!layer) return geometry;
+    const r = resolveGeometryZ(geometry, { hasZ: layer.source.hasZ, memory: layer.source.format === 'memory', defaultZ: layer.defaultZ });
+    if (r.promote) {
+      this.store.updateLayer(layerId, { source: { ...layer.source, hasZ: true } });
+      this.message('info', `La capa «${layer.name}» pasa a ser 3D porque se ha enganchado a elementos con cota.`);
+    } else if (r.stripped) {
+      this.message('info', `La capa «${layer.name}» es 2D: no se guarda la cota del elemento al que se enganchó.`);
+    }
+    return r.geometry;
   }
 
   private preview(layerId: string, featureId: string, geometry: Geometry | null): void {

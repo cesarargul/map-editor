@@ -330,3 +330,81 @@ export function dedupeConsecutive(coords: Position[]): Position[] {
   }
   return out;
 }
+
+// --- Coherencia de la coordenada Z -----------------------------------------------------------
+
+/** Quita la Z de todas las posiciones. */
+export function stripZ(geometry: Geometry): Geometry {
+  return mapCoords(geometry, (c) => (c.length > 2 ? [c[0]!, c[1]!] : c));
+}
+
+function fillSequence(seq: Position[], defaultZ: number): void {
+  let first: number | undefined;
+  for (const c of seq) {
+    if (c.length > 2 && Number.isFinite(c[2])) {
+      first = c[2]!;
+      break;
+    }
+  }
+  let prev = first ?? defaultZ;
+  for (const c of seq) {
+    if (c.length > 2 && Number.isFinite(c[2])) prev = c[2]!;
+    else c[2] = prev;
+  }
+}
+
+/**
+ * Completa la Z que falta (devuelve una geometría nueva). En líneas y anillos, un vértice sin Z
+ * continúa a la cota del anterior; los del principio toman la del primero que sí la tiene; si
+ * ninguno la tiene, `defaultZ`. En puntos, `defaultZ`.
+ */
+export function fillMissingZ(geometry: Geometry, defaultZ: number): Geometry {
+  const out = mapCoords(geometry, (c) => [...c]);
+  switch (out.type) {
+    case 'Point':
+      if (out.coordinates.length < 3) out.coordinates[2] = defaultZ;
+      break;
+    case 'MultiPoint':
+      for (const c of out.coordinates) if (c.length < 3) c[2] = defaultZ;
+      break;
+    default:
+      for (const part of linearParts(out)) {
+        if (part.closed) {
+          const open = part.coords.slice(0, -1);
+          fillSequence(open, defaultZ);
+          part.coords[part.coords.length - 1] = [...open[0]!];
+        } else fillSequence(part.coords, defaultZ);
+      }
+  }
+  return out;
+}
+
+export interface LayerZRule {
+  /** La capa es 3D. */
+  hasZ: boolean;
+  /** Capa creada en el editor (puede pasar a 3D); las de fichero conservan su dimensión. */
+  memory: boolean;
+  defaultZ: number;
+}
+
+export interface ZResolution {
+  geometry: Geometry;
+  /** La capa debe pasar a 3D (la geometría trae Z y la capa es nueva y 2D). */
+  promote: boolean;
+  /** Se ha descartado la Z porque la capa es 2D y viene de un fichero. */
+  stripped: boolean;
+}
+
+/**
+ * Hace coherente la Z de una geometría con la capa que la contiene, para que el snap posterior
+ * la reconozca siempre:
+ * - capa 3D: completa la Z que falte;
+ * - capa nueva 2D con Z en la geometría (p. ej. por enganchar a algo 3D): pasa a 3D;
+ * - capa 2D de fichero: descarta la Z.
+ */
+export function resolveGeometryZ(geometry: Geometry, layer: LayerZRule): ZResolution {
+  if (layer.hasZ) return { geometry: fillMissingZ(geometry, layer.defaultZ), promote: false, stripped: false };
+  if (!hasZ(geometry)) return { geometry, promote: false, stripped: false };
+  if (layer.memory) return { geometry: fillMissingZ(geometry, layer.defaultZ), promote: true, stripped: false };
+  return { geometry: stripZ(geometry), promote: false, stripped: true };
+}

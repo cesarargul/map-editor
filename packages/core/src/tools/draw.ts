@@ -1,4 +1,5 @@
 import type { Feature, Geometry, Position } from 'geojson';
+import { dedupeConsecutive } from '../geom/coords.js';
 import type { GeometryKind } from '../types.js';
 import { pt, type SnapRequest, type Tool, type ToolContext, type ToolPointerEvent, type ToolId } from './tool.js';
 
@@ -18,6 +19,8 @@ export class DrawTool implements Tool {
   private coords: Position[] = [];
   private hover: Position | null = null;
   private layerId: string | null = null;
+  /** Último clic (en pantalla): el segundo clic de un doble clic no debe añadir otro vértice, aunque el snap lo haya movido. */
+  private lastClick: { x: number; y: number; t: number } | null = null;
 
   constructor(readonly id: Extract<ToolId, 'draw-point' | 'draw-line' | 'draw-polygon'>) {
     this.kind = TOOL_KIND[id]!;
@@ -26,6 +29,7 @@ export class DrawTool implements Tool {
   activate(ctx: ToolContext): void {
     this.ctx = ctx;
     this.reset();
+    this.lastClick = null;
   }
 
   deactivate(): void {
@@ -46,7 +50,12 @@ export class DrawTool implements Tool {
     const layerId = this.layerId ?? this.ctx.drawTarget(this.kind);
     if (!layerId) return;
     this.layerId = layerId;
-    const coord = this.ctx.withZ(e.coord, layerId);
+    const now = Date.now();
+    const prev = this.lastClick;
+    this.lastClick = { x: e.point.x, y: e.point.y, t: now };
+    if (prev && now - prev.t < 600 && dist(prev, e.point) < 6) return; // segundo clic de un doble clic
+    // La Z solo viene del snap; se completa de forma coherente al confirmar la geometría
+    const coord = [...e.coord];
 
     if (this.kind === 'Point') {
       this.commit({ type: 'Point', coordinates: coord });
@@ -129,6 +138,8 @@ export class DrawTool implements Tool {
   }
 
   finish(): void {
+    // Nunca dejar vértices consecutivos repetidos (p. ej. por clics muy seguidos enganchados al mismo punto)
+    this.coords = dedupeConsecutive(this.coords);
     if (this.kind === 'LineString' && this.coords.length >= 2) {
       this.commit({ type: 'LineString', coordinates: this.coords });
     } else if (this.kind === 'Polygon' && this.coords.length >= 3) {
@@ -141,7 +152,8 @@ export class DrawTool implements Tool {
   private commit(geometry: Geometry): void {
     const layerId = this.layerId;
     if (!layerId) return;
-    const id = this.ctx.store.transact(LABEL[this.kind], (tx) => tx.add(layerId, geometry, {}));
+    const finalGeometry = this.ctx.finalizeGeometry(layerId, geometry);
+    const id = this.ctx.store.transact(LABEL[this.kind], (tx) => tx.add(layerId, finalGeometry, {}));
     this.ctx.setSelection([{ layerId, featureId: id }]);
     this.reset();
     this.changed();

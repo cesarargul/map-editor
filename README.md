@@ -135,6 +135,22 @@ await editor.downloadLayer(capa.id);                      // mismo formato y CRS
 await editor.exportLayer(capa.id, { format: 'gpkg', crs: 'EPSG:25830', scope: 'changes' });
 ```
 
+## Herramientas de dibujo y capa activa
+
+Las herramientas de dibujo se dibujan siempre en la **capa activa** y solo están disponibles cuando esta es editable, visible y del tipo correspondiente: *punto* en capas de puntos, *línea* en capas de líneas y *polígono* en capas de polígonos (las capas de tipo mixto admiten las tres). La barra solo muestra las que sirven; si cambias de capa mientras dibujas, vuelve a *Seleccionar*. El núcleo lo exige también por API y atajos: `editor.getAvailableTools()`, `editor.isToolAvailable(id)` y el evento `available-tools-changed`.
+
+## Cota Z al dibujar y editar
+
+La Z de cada vértice nuevo se decide así, para que el snap la encuentre siempre:
+
+- Si se engancha a un elemento con cota, hereda su Z (o la interpola en una arista).
+- Si no, **continúa a la cota del vértice anterior**; los del principio toman la del primero enganchado. Si no hay ningún enganche, se usa la **Z por defecto** de la capa (campo «Z por defecto» del panel de capas, en capas 3D).
+- Una capa **nueva** 2D que se engancha a elementos con cota pasa a 3D; una capa 2D **de fichero** descarta la cota (con un aviso).
+
+## Operaciones largas
+
+`editor.on('busy-changed', ({ busy, label }) => …)` avisa de que se están leyendo ficheros, recuperando la sesión o generando un fichero. `<map-editor>` lo muestra como un aviso con indicador de progreso (al menos 0,45 s, para que no parpadee).
+
 ## Snapping
 
 ```ts
@@ -155,7 +171,7 @@ La configuración es JSON serializable. Desde la interfaz se edita con el botón
 
 | Tecla | Acción |
 |---|---|
-| V · P · L · G · M | Seleccionar · Punto · Línea · Polígono · Mover |
+| V · P · L · G · M | Seleccionar · Punto · Línea · Polígono · Mover (P, L y G solo si la capa activa es de ese tipo) |
 | S | Activar/desactivar snapping |
 | Ctrl+Z · Ctrl+Y (Ctrl+Mayús+Z) | Deshacer · Rehacer |
 | Supr / Retroceso | Borrar selección (en dibujo: quitar el último vértice) |

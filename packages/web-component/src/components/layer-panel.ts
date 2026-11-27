@@ -91,6 +91,16 @@ export class MeLayerPanel extends EditorConsumer {
       input[type='file'] {
         display: none;
       }
+      .defz {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px 10px;
+        color: var(--me-fg-muted);
+      }
+      .defz input {
+        width: 7em;
+      }
     `,
   ];
 
@@ -129,7 +139,26 @@ export class MeLayerPanel extends EditorConsumer {
             ${layers.map((l, i) => this.renderLayer(l, l.id === active, i === 0, i === layers.length - 1))}
           </ul>`
         : html`<p class="empty muted">Arrastra aquí ficheros GeoJSON, Shapefile (.zip), KML, GPX, GeoPackage o FlatGeobuf, o crea una capa nueva.</p>`}
+      ${this.renderDefaultZ(layers.find((l) => l.id === active))}
     `;
+  }
+
+  /** Cota de los vértices nuevos que no se enganchan a nada (solo en la capa activa si es 3D). */
+  private renderDefaultZ(layer: LayerInfo | undefined) {
+    if (!layer?.source.hasZ || !layer.editable) return nothing;
+    return html`<label class="defz" title="Z de los vértices nuevos que no se enganchan a ningún elemento con cota">
+      Z por defecto
+      <input
+        type="number"
+        step="any"
+        aria-label="Z por defecto de los vértices nuevos"
+        .value=${String(layer.defaultZ)}
+        @change=${(e: Event) => {
+          const v = Number((e.target as HTMLInputElement).value);
+          if (Number.isFinite(v)) this.editor!.updateLayer(layer.id, { defaultZ: v });
+        }}
+      />
+    </label>`;
   }
 
   private renderLayer(l: LayerInfo, active: boolean, top: boolean, bottom: boolean) {
