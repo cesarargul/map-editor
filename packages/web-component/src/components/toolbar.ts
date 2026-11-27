@@ -63,7 +63,7 @@ export class MeToolbar extends EditorConsumer {
 
   constructor() {
     super();
-    this.watch = ['tool-changed', 'history-changed', 'selection-changed', 'snap-config-changed'];
+    this.watch = ['tool-changed', 'history-changed', 'selection-changed', 'snap-config-changed', 'active-layer-changed', 'layers-changed', 'available-tools-changed'];
   }
 
   override render() {
@@ -73,7 +73,7 @@ export class MeToolbar extends EditorConsumer {
     const snap = ed.getSnapConfig().enabled;
     const sel = ed.getSelection().length;
     return html`<div class="bar panel" role="toolbar" aria-label="Herramientas de edición">
-      ${TOOLS.map(
+      ${TOOLS.filter((t) => ed.isToolAvailable(t.id)).map(
         (t) => html`<button class="icon" title="${t.label} (${t.key})" aria-label=${t.label} aria-pressed=${tool === t.id} @click=${() => ed.setTool(t.id)}>
           ${icons[t.icon]}
         </button>`,

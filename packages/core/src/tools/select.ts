@@ -83,8 +83,7 @@ export class SelectTool implements Tool {
   onPointerMove(e: ToolPointerEvent): void {
     const s = this.state;
     if (s.kind === 'vertex') {
-      const z = this.ctx.withZ(e.coord, s.ref.layerId);
-      setVertex(s.geometry, s.path, keepZ(z, s.geometry, s.path, !!e.snap));
+      setVertex(s.geometry, s.path, keepZ(e.coord, s.geometry, s.path));
       s.moved = true;
       this.ctx.preview(s.ref.layerId, s.ref.featureId, s.geometry);
       this.ctx.redraw();
@@ -101,8 +100,8 @@ export class SelectTool implements Tool {
       this.suppressClick = true;
       this.setActiveVertex(s.moved ? null : { ref: s.ref, path: s.path });
       if (s.moved) {
-        const label = 'Editar vértice';
-        this.ctx.store.transact(label, (tx) => tx.setGeometry(s.ref.layerId, s.ref.featureId, s.geometry));
+        const geometry = this.ctx.finalizeGeometry(s.ref.layerId, s.geometry);
+        this.ctx.store.transact('Editar vértice', (tx) => tx.setGeometry(s.ref.layerId, s.ref.featureId, geometry));
       }
       this.ctx.refresh(s.ref.layerId);
     } else if (s.kind === 'box') {
@@ -232,9 +231,12 @@ export class SelectTool implements Tool {
   }
 }
 
-/** Si no hay snap, mantiene la Z que tenía el vértice en lugar de la Z por defecto. */
-function keepZ(coord: Position, geometry: Geometry, path: VertexPath, snapped: boolean): Position {
-  if (snapped) return coord;
+/**
+ * La Z del vértice: la del elemento al que se engancha, si la tiene; si no, conserva la que
+ * ya tenía el vértice.
+ */
+function keepZ(coord: Position, geometry: Geometry, path: VertexPath): Position {
+  if (coord.length > 2) return coord;
   const prev = vertexAt(geometry, path);
   if (prev && prev.length > 2) return [coord[0]!, coord[1]!, prev[2]!];
   return coord;

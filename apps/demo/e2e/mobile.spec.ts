@@ -3,6 +3,32 @@ import { devices, expect, test } from '@playwright/test';
 const { defaultBrowserType: _ignored, ...pixel } = devices['Pixel 7']!;
 test.use(pixel);
 
+test('móvil: se ve el aviso de carga al abrir ficheros desde el panel y al recuperar la sesión', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('body[data-ready=true]');
+  await page.locator('map-editor button[aria-label="Paneles"]').tap();
+  // Escuchar el autoguardado antes de cargar nada, para no perderse el evento
+  await page.evaluate(() => {
+    (window as unknown as { saved: Promise<unknown> }).saved = new Promise((r) => window.editor.on('autosaved', r));
+  });
+
+  const busy = page.locator('map-editor .busy');
+  await page.locator('me-layer-panel input[type=file]').setInputFiles(new URL('../public/samples/red_abastecimiento.geojson', import.meta.url).pathname);
+  await expect(busy).toBeVisible();
+  await expect(busy).toContainText('Leyendo ficheros');
+  await expect(busy).toBeHidden();
+  await expect(page.locator('me-layer-panel li')).toHaveCount(1);
+
+  // Recuperar la sesión guardada tras recargar
+  await page.evaluate(() => (window as unknown as { saved: Promise<unknown> }).saved);
+  await page.reload();
+  await page.waitForSelector('body[data-ready=true]');
+  await page.locator('map-editor .banner button.primary').tap();
+  await expect(busy).toBeVisible();
+  await expect(busy).toContainText('Recuperando la sesión');
+  await expect(busy).toBeHidden();
+});
+
 test('móvil: dibujar con toques, terminar con botón, arrastrar y borrar vértice', async ({ page, context }) => {
   if (process.env['CPU_THROTTLE']) {
     const c = await context.newCDPSession(page);

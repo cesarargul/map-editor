@@ -240,8 +240,8 @@ test('atajos de teclado con el foco en un panel y mover entidad con Ctrl+Z', asy
   await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('move');
   // El botón «Tabla» desaparece al pulsarlo y el foco vuelve a <body>: los atajos deben seguir funcionando
   await page.locator('map-editor button', { hasText: 'Tabla' }).click();
-  await page.keyboard.press('l');
-  await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('draw-line');
+  await page.keyboard.press('p'); // la capa activa es de puntos
+  await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('draw-point');
   await page.keyboard.press('m');
 
   await focusOn(page, 440200, 4474150);
@@ -256,6 +256,108 @@ test('atajos de teclado con el foco en un panel y mover entidad con Ctrl+Z', asy
   expect(after.coordinates[2]).toBe(651.4); // mover en planta conserva la cota
   await page.keyboard.press('Control+z');
   await expect.poll(() => page.evaluate(() => JSON.stringify(window.editor.store.getFeatures(window.editor.getLayers()[0]!.id)[0]!.geometry))).toBe(before);
+});
+
+test('las herramientas de dibujo solo aparecen si la capa activa es de ese tipo', async ({ page }) => {
+  const draw = (label: string) => page.locator(`me-toolbar button[aria-label="${label}"]`);
+  const expectOnly = async (only: 'Dibujar punto' | 'Dibujar línea' | 'Dibujar polígono') => {
+    for (const l of ['Dibujar punto', 'Dibujar línea', 'Dibujar polígono']) await expect(draw(l)).toHaveCount(l === only ? 1 : 0);
+  };
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await expectOnly('Dibujar línea');
+  await loadSample(page, 'parcelas.zip');
+  await expectOnly('Dibujar polígono');
+  await loadSample(page, 'hidrantes.gpkg');
+  await expectOnly('Dibujar punto');
+  await expect(page.locator('me-toolbar button[aria-label="Seleccionar y editar vértices"]')).toHaveCount(1);
+  await expect(page.locator('me-toolbar button[aria-label="Mover entidades"]')).toHaveCount(1);
+
+  // Con la herramienta de punto activa, cambiar a una capa de líneas devuelve a «Seleccionar»
+  await page.evaluate(() => window.editor.setTool('draw-point'));
+  await page.evaluate(() => window.editor.setActiveLayer(window.editor.getLayers().find((l) => l.name === 'red_abastecimiento')!.id));
+  await expect.poll(() => page.evaluate(() => window.editor.getTool())).toBe('select');
+  await expectOnly('Dibujar línea');
+
+  // El núcleo también lo exige (atajos, API): se rechaza con un aviso
+  const msg = page.evaluate(() => new Promise<string>((r) => window.editor.on('message', (m) => r(m.text))));
+  await page.evaluate(() => window.editor.setTool('draw-polygon'));
+  expect(await page.evaluate(() => window.editor.getTool())).toBe('select');
+  expect(await msg).toContain('necesita una capa activa de polígonos');
+
+  // Una capa bloqueada no admite dibujo
+  await page.evaluate(() => window.editor.updateLayer(window.editor.getActiveLayerId()!, { editable: false }));
+  await expect(draw('Dibujar línea')).toHaveCount(0);
+  // Sin capa activa tampoco
+  await page.evaluate(() => window.editor.setActiveLayer(null));
+  for (const l of ['Dibujar punto', 'Dibujar línea', 'Dibujar polígono']) await expect(draw(l)).toHaveCount(0);
+  expect(await page.evaluate(() => window.editor.getAvailableTools())).toEqual(['select', 'move']);
+});
+
+test('capa nueva enganchada a elementos 3D: pasa a 3D y el snap sobre lo dibujado devuelve Z', async ({ page }) => {
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await focusOn(page, 440200, 4474000);
+  const newLayer = await page.evaluate(() => window.editor.createLayer('nueva', 'LineString').id);
+  expect(await page.evaluate((id) => window.editor.getLayer(id)!.source.hasZ, newLayer)).toBe(false);
+
+  await page.locator('me-toolbar button[aria-label="Dibujar línea"]').click();
+  const a = await toScreen(page, await utm(page, 440200, 4474000));
+  const b = await toScreen(page, await utm(page, 440250, 4473930));
+  const c = await toScreen(page, await utm(page, 440300, 4473900));
+  await page.mouse.move(a.x + 4, a.y + 3);
+  await page.mouse.click(a.x + 4, a.y + 3); // snap a un vértice con Z = 650
+  await page.mouse.click(b.x, b.y); // libre
+  await page.mouse.dblclick(c.x, c.y); // libre
+
+  const saved = await page.evaluate((id) => {
+    const f = window.editor.store.getFeatures(id).at(-1)!;
+    return { hasZ: window.editor.getLayer(id)!.source.hasZ, coords: (f.geometry as unknown as { coordinates: number[][] }).coordinates };
+  }, newLayer);
+  expect(saved.hasZ).toBe(true);
+  expect(saved.coords.map((p) => p.length)).toEqual([3, 3, 3]);
+  expect(saved.coords.map((p) => p[2])).toEqual([650, 650, 650]); // los libres continúan a la cota del enganchado
+
+  // El snap sobre la arista de la línea nueva reconoce su Z
+  await page.evaluate(() => {
+    window.editor.on('pointer-move', (e) => ((window as unknown as { snapSeen: unknown }).snapSeen = e.snap));
+  });
+  const mid = await toScreen(page, await utm(page, 440225, 4473965));
+  await page.mouse.move(mid.x, mid.y);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { snapSeen: { layerId: string; coord: number[] } | null }).snapSeen))
+    .toMatchObject({ layerId: newLayer });
+  const seen = await page.evaluate(() => (window as unknown as { snapSeen: { coord: number[] } }).snapSeen);
+  expect(seen.coord[2]).toBe(650);
+});
+
+test('capa 3D: los vértices libres no recuperan Z=0 y se puede fijar la Z por defecto', async ({ page }) => {
+  await loadSample(page, 'red_abastecimiento.geojson');
+  await focusOn(page, 440200, 4474000);
+  const layerId = await page.evaluate(() => window.editor.getActiveLayerId()!);
+  const lastZ = () =>
+    page.evaluate((id) => (window.editor.store.getFeatures(id).at(-1)!.geometry as unknown as { coordinates: number[][] }).coordinates.map((p) => p[2]), layerId);
+
+  // Empieza libre y termina enganchado: los vértices iniciales toman la cota del enganchado
+  await page.locator('me-toolbar button[aria-label="Dibujar línea"]').click();
+  const p1 = await toScreen(page, await utm(page, 440120, 4473900));
+  const p2 = await toScreen(page, await utm(page, 440150, 4473940));
+  const p3 = await toScreen(page, await utm(page, 440200, 4474000));
+  await page.mouse.click(p1.x, p1.y);
+  await page.mouse.click(p2.x, p2.y);
+  await page.mouse.move(p3.x + 3, p3.y + 3);
+  await page.mouse.dblclick(p3.x + 3, p3.y + 3);
+  await expect.poll(lastZ).toEqual([650, 650, 650]);
+
+  // Sin nada a lo que engancharse se usa la Z por defecto de la capa
+  const z = page.locator('me-layer-panel input[aria-label="Z por defecto de los vértices nuevos"]');
+  await z.fill('12.5');
+  await z.blur();
+  await expect.poll(() => page.evaluate((id) => window.editor.getLayer(id)!.defaultZ, layerId)).toBe(12.5);
+  await page.locator('me-toolbar button[aria-label="Dibujar línea"]').click();
+  const q1 = await toScreen(page, await utm(page, 440300, 4473880));
+  const q2 = await toScreen(page, await utm(page, 440330, 4473860));
+  await page.mouse.click(q1.x, q1.y);
+  await page.mouse.dblclick(q2.x, q2.y);
+  await expect.poll(lastZ).toEqual([12.5, 12.5]);
 });
 
 declare global {

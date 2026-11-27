@@ -44,8 +44,8 @@ export interface ToolContext {
   isEditable(layerId: string): boolean;
   /** Capa donde dibujar una geometría del tipo indicado (la activa si es compatible o una nueva). */
   drawTarget(kind: Exclude<GeometryKind, 'Mixed'>): string | null;
-  /** Completa la Z de las coordenadas nuevas en capas 3D. */
-  withZ(coord: Position, layerId: string): Position;
+  /** Hace coherente la Z de la geometría con la de su capa (completa, promueve o descarta). */
+  finalizeGeometry(layerId: string, geometry: Geometry): Geometry;
   /** Muestra una geometría provisional sin tocar el almacén (arrastres). */
   preview(layerId: string, featureId: string, geometry: Geometry | null): void;
   /** Descarta las vistas provisionales de una capa. */

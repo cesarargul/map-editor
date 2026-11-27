@@ -18,6 +18,9 @@ interface Toast {
   text: string;
 }
 
+/** Tiempo mínimo que se muestra el aviso de ocupado (ms). */
+const MIN_BUSY_MS = 450;
+
 const ALL_UI = ['toolbar', 'layers', 'attributes', 'table', 'basemaps', 'status'] as const;
 type UiPart = (typeof ALL_UI)[number];
 
@@ -50,7 +53,7 @@ export class MapEditorElement extends LitElement {
     tableOpen: { state: true },
     panelOpen: { state: true },
     recoverable: { state: true },
-    loading: { state: true },
+    busyLabel: { state: true },
   };
 
   declare basemap: string;
@@ -71,7 +74,9 @@ export class MapEditorElement extends LitElement {
   declare tableOpen: boolean;
   declare panelOpen: boolean;
   declare recoverable: SessionSummary | null;
-  declare loading: boolean;
+  declare busyLabel: string | null;
+  private busyShownAt = 0;
+  private busyHideTimer: ReturnType<typeof setTimeout> | null = null;
 
   private static lastActive: MapEditorElement | null = null;
   private _editor: MapEditor | null = null;
@@ -243,13 +248,43 @@ export class MapEditorElement extends LitElement {
         width: max-content;
         max-width: calc(100% - 20px);
       }
-      .loading {
+      .busy {
         position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 26;
-        padding: 10px 16px;
+        inset: 0;
+        z-index: 40;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--me-bg) 35%, transparent);
+        pointer-events: auto;
+        cursor: progress;
+      }
+      .busy .card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 20px;
+        font-size: 15px;
+        font-weight: 600;
+        max-width: calc(100% - 32px);
+      }
+      .spinner {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border: 3px solid var(--me-border);
+        border-top-color: var(--me-primary);
+        border-radius: 50%;
+        animation: me-spin 0.8s linear infinite;
+      }
+      @keyframes me-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation-duration: 2.4s;
+        }
       }
       .maplibregl-ctrl-bottom-right {
         bottom: 0;
@@ -315,7 +350,7 @@ export class MapEditorElement extends LitElement {
     // En pantallas pequeñas los paneles empiezan plegados para dejar sitio al mapa
     this.panelOpen = typeof matchMedia === 'undefined' || !matchMedia('(max-width: 640px)').matches;
     this.recoverable = null;
-    this.loading = false;
+    this.busyLabel = null;
     this.whenReady = new Promise((r) => (this.resolveReady = r));
   }
 
@@ -357,6 +392,7 @@ export class MapEditorElement extends LitElement {
     this.cleanup.push(
       ed.on('message', (m) => this.toast(m.level, m.text)),
       ed.on('session-recoverable', (s) => (this.recoverable = s)),
+      ed.on('busy-changed', (b) => this.onBusy(b.busy, b.label)),
       ed.on('features-changed', (e) => this.emit('editor-change', e)),
       ed.on('selection-changed', (e) => this.emit('selection-change', e)),
       ed.on('layers-changed', (e) => this.emit('layers-change', e)),
@@ -408,23 +444,36 @@ export class MapEditorElement extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    if (this.busyHideTimer) clearTimeout(this.busyHideTimer);
     this.cleanup.forEach((c) => c());
     this.cleanup = [];
     this._editor?.destroy();
     this._editor = null;
   }
 
-  /** Carga ficheros mostrando un indicador de progreso. */
+  /** Carga ficheros (el indicador de progreso lo gobierna el evento `busy-changed` del editor). */
   async loadFiles(files: File[]): Promise<void> {
     if (!this._editor) return;
-    this.loading = true;
     try {
       await this._editor.loadFiles(files);
     } catch (err) {
       this.toast('error', err instanceof Error ? err.message : String(err));
-    } finally {
-      this.loading = false;
     }
+  }
+
+  /** Muestra el aviso de «ocupado» al menos un instante, para que no parpadee en operaciones rápidas. */
+  private onBusy(busy: boolean, label: string | null): void {
+    if (this.busyHideTimer) {
+      clearTimeout(this.busyHideTimer);
+      this.busyHideTimer = null;
+    }
+    if (busy) {
+      this.busyShownAt = Date.now();
+      this.busyLabel = label ?? 'Trabajando…';
+      return;
+    }
+    const wait = Math.max(0, MIN_BUSY_MS - (Date.now() - this.busyShownAt));
+    this.busyHideTimer = setTimeout(() => (this.busyLabel = null), wait);
   }
 
   override render() {
@@ -458,7 +507,11 @@ export class MapEditorElement extends LitElement {
           : nothing}
         ${ed && this.has('toolbar') ? html`<me-edit-actions class="actions" .editor=${ed}></me-edit-actions>` : nothing}
         ${this.renderRecovery()} ${this.renderToasts()}
-        ${this.loading ? html`<div class="loading panel">Leyendo ficheros…</div>` : nothing}
+        ${this.busyLabel
+          ? html`<div class="busy" role="status" aria-live="polite" aria-busy="true">
+              <div class="card panel"><span class="spinner" aria-hidden="true"></span><span>${this.busyLabel}</span></div>
+            </div>`
+          : nothing}
         ${this.dragging ? html`<div class="drop"><span>Suelta aquí los ficheros (GeoJSON, Shapefile, KML, GPX, GeoPackage, FlatGeobuf…)</span></div>` : nothing}
         ${ed && this.dialog?.kind === 'export'
           ? html`<me-export-dialog .editor=${ed} .layerId=${this.dialog.layerId} @me-close-dialog=${() => (this.dialog = null)}></me-export-dialog>`
