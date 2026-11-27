@@ -107,6 +107,7 @@ export const controls = css`
     color: var(--me-fg-muted);
   }
   h3 {
+    overflow-wrap: anywhere;
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.04em;

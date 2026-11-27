@@ -29,6 +29,63 @@ test('móvil: se ve el aviso de carga al abrir ficheros desde el panel y al recu
   await expect(busy).toBeHidden();
 });
 
+test('móvil: tabla con muchos campos (scroll lateral y X visible) y nombres largos completos', async ({ page, context }) => {
+  await page.goto('/');
+  await page.waitForSelector('body[data-ready=true]');
+  const longName = 'Red de abastecimiento de agua potable del municipio – tramo norte (ampliación 2026)';
+  await page.evaluate((name) => {
+    const fields = Array.from({ length: 30 }, (_, i) => ({ name: `campo_largo_numero_${i + 1}`, type: 'string' as const }));
+    const layer = window.editor.createLayer(name, 'Point', { fields });
+    const props = Object.fromEntries(fields.map((f) => [f.name, `valor ${f.name}`]));
+    window.editor.store.transact('prueba', (tx) => void tx.add(layer.id, { type: 'Point', coordinates: [-3.7, 40.4] }, props));
+  }, longName);
+  const vp = page.viewportSize()!.width;
+
+  // Nombre de capa: se ajusta a varias líneas, sin recortes, y las acciones caben en la pantalla
+  await page.locator('map-editor button[aria-label="Paneles"]').tap();
+  const name = await page.locator('me-layer-panel li .name').first().evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { clippedX: el.scrollWidth > el.clientWidth + 1, clippedY: el.scrollHeight > el.clientHeight + 1, ellipsis: cs.textOverflow === 'ellipsis', wraps: cs.whiteSpace !== 'nowrap', height: el.getBoundingClientRect().height, line: parseFloat(cs.lineHeight) || 16 };
+  });
+  expect(name).toMatchObject({ clippedX: false, clippedY: false, ellipsis: false, wraps: true });
+  expect(name.height).toBeGreaterThan(name.line * 2); // ocupa varias líneas
+  for (const b of await page.locator('me-layer-panel li .actions button').all()) {
+    const box = (await b.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(vp);
+  }
+
+  // Tabla: ocupa el ancho de la pantalla, hace scroll lateral con el dedo y la X se ve
+  await page.locator('map-editor button', { hasText: 'Tabla' }).tap();
+  const close = page.locator('me-attribute-table button[aria-label="Cerrar tabla"]');
+  await expect(close).toBeInViewport();
+  const scroll = page.locator('me-attribute-table .scroll');
+  const dims = () => scroll.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, left: el.scrollLeft }));
+  const d0 = await dims();
+  expect(d0.cw).toBeLessThanOrEqual(vp);
+  expect(d0.sw).toBeGreaterThan(d0.cw * 2);
+
+  const box = (await scroll.boundingBox())!;
+  const y = box.y + box.height / 2;
+  const cdp = await context.newCDPSession(page);
+  const touch = (type: string, x = 0) => cdp.send('Input.dispatchTouchEvent', { type: type as 'touchStart', touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+  await touch('touchStart', vp - 40);
+  for (let i = 1; i <= 10; i++) await touch('touchMove', vp - 40 - i * 32);
+  await touch('touchEnd');
+  await expect.poll(async () => (await dims()).left).toBeGreaterThan(100);
+  // Esperar a que acabe la inercia del gesto: un toque durante ella solo la detiene
+  await expect
+    .poll(async () => {
+      const a = (await dims()).left;
+      await page.waitForTimeout(200);
+      return a === (await dims()).left;
+    })
+    .toBe(true);
+
+  await close.tap();
+  await expect(page.locator('me-attribute-table')).toHaveCount(0);
+});
+
 test('móvil: dibujar con toques, terminar con botón, arrastrar y borrar vértice', async ({ page, context }) => {
   if (process.env['CPU_THROTTLE']) {
     const c = await context.newCDPSession(page);

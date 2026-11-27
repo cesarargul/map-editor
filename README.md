@@ -21,7 +21,7 @@ El análisis y las decisiones de diseño están en [`docs/ANALISIS.md`](docs/ANA
 - [x] Herramientas esenciales: seleccionar (clic, Mayús, rectángulo), dibujar punto/línea/polígono, editar vértices (mover, insertar, borrar), mover entidades, borrar, deshacer/rehacer, atributos (formulario, tabla y campos)
 - [x] Snapping a vértice, extremo, arista, punto medio e intersección, con matriz configurable entre capas y tipos por capa
 - [x] Snapping 3D: hereda la Z del vértice o la interpola en la arista; marca los cruces en planta que no coinciden en cota
-- [x] Autoguardado en IndexedDB con recuperación de la sesión (incluido el historial de deshacer)
+- [x] Autoguardado en IndexedDB con recuperación de la sesión: capas, cambios, historial de deshacer y vista del mapa (ubicación, zoom y orientación; las sesiones antiguas sin vista encuadran las capas)
 - [ ] Fase 2: grafo de conectividad 3D y herramientas de calidad/topología
 - [ ] Fase 3: geometría avanzada (dividir, unir, rotar…) y productividad (copiar/pegar, medir…)
 - [ ] Fase 4: WMS dinámicos, proxy CORS, catálogo recolectado con IA y buscador
@@ -196,5 +196,5 @@ La configuración es JSON serializable. Desde la interfaz se edita con el botón
 
 - MapLibre es 2.5D: la Z se ve en la barra de estado, en el formulario de atributos y en los avisos de cruce, no como geometría en 3D.
 - ED50 se transforma con parámetros aproximados (±1-2 m). Para precisión centimétrica hace falta la rejilla NTv2 del IGN.
-- El autoguardado serializa todas las capas en cada guardado (con retardo de 1,5 s). Con capas de cientos de miles de entidades conviene desactivarlo o usar un `SessionStorage` propio.
+- La vista del mapa se guarda aparte y de forma ligera al moverlo (`flushSession()` fuerza el guardado). El autoguardado de las capas serializa todas en cada guardado (con retardo de 1,5 s). Con capas de cientos de miles de entidades conviene desactivarlo o usar un `SessionStorage` propio.
 - La política de uso de `tile.openstreetmap.org` no permite uso intensivo: en producción, configura `osm-tile-url` con un proveedor propio.

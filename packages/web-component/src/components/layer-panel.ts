@@ -36,9 +36,10 @@ export class MeLayerPanel extends EditorConsumer {
       }
       li {
         display: grid;
-        grid-template-columns: auto auto 1fr auto;
+        /* Fila 1: visibilidad, color y nombre (puede ocupar varias líneas). Fila 2: acciones. */
+        grid-template-columns: auto auto minmax(0, 1fr);
         align-items: center;
-        gap: 6px;
+        gap: 4px 6px;
         padding: 4px 6px;
         border-radius: 6px;
         border: 1px solid transparent;
@@ -49,10 +50,13 @@ export class MeLayerPanel extends EditorConsumer {
       }
       .name {
         cursor: pointer;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.3;
         min-width: 0;
+      }
+      .name input {
+        width: 100%;
       }
       .name small {
         display: block;
@@ -68,15 +72,18 @@ export class MeLayerPanel extends EditorConsumer {
         background: none;
       }
       .actions {
+        grid-column: 1 / -1;
         display: flex;
-        gap: 0;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 2px;
       }
       .actions button {
-        padding: 3px;
+        padding: 6px;
       }
       .actions svg {
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
       }
       .empty {
         padding: 12px;
